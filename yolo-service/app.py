@@ -5,42 +5,36 @@ Runs as a separate Docker container, called from Node backend.
 """
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.concurrency import run_in_threadpool
+from contextlib import asynccontextmanager
 import uvicorn
 import io
 import os
 from PIL import Image
 import numpy as np
 
-app = FastAPI(title="YOLO Phone Detection Service", version="1.0")
-
-# Allow requests from the Node.js backend only
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Restrict to backend URL in production
-    allow_methods=["POST"],
-    allow_headers=["*"],
-)
-
 # Load YOLOv8n model on startup
-# Uses COCO-pretrained checkpoint filtered to 'cell phone' class (class_id=67 in COCO)
-# Section 15: pip install ultralytics; use pre-trained yolov8n.pt
 model = None
 PHONE_CLASS_ID = 67  # COCO dataset class ID for 'cell phone'
 CONFIDENCE_THRESHOLD = 0.45  # Minimum confidence to flag as phone detected
 
-@app.on_event("startup")
-async def load_model():
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global model
     try:
         import torch
         # PyTorch 2.6 compatibility: allow loading trusted ultralytics checkpoint
         _orig_torch_load = torch.load
+
         def safe_load(*args, **kwargs):
-            kwargs['weights_only'] = False
+            kwargs["weights_only"] = False
             return _orig_torch_load(*args, **kwargs)
+
         torch.load = safe_load
 
         from ultralytics import YOLO
+
         model_path = os.path.join(os.path.dirname(__file__), "model", "yolov8n.pt")
         if not os.path.exists(model_path):
             model_path = "yolov8n.pt"
@@ -50,28 +44,39 @@ async def load_model():
         print(f"[YOLO] WARNING: Model failed to load: {e}")
         print("[YOLO] Service will return phoneDetected=false for all frames.")
 
+    yield
+
+
+app = FastAPI(
+    title="YOLO Phone Detection Service",
+    version="1.0",
+    lifespan=lifespan,
+)
+
+# Allow requests from the Node.js backend and browser clients
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 @app.get("/health")
-async def health():
+def health():
     return {"status": "ok", "model_loaded": model is not None}
 
-@app.post("/detect")
-async def detect_phone(image: UploadFile = File(...)):
-    """
-    Receive a webcam frame and detect whether a phone is present.
-    Returns: { phoneDetected: bool, confidence: float, detections: list }
-    """
-    # Read image
-    try:
-        image_bytes = await image.read()
-        pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
+def _run_inference_sync(image_bytes: bytes):
+    """
+    Synchronous CPU-bound inference helper executed inside FastAPI thread pool.
+    Prevents blocking the async event loop during high candidate concurrency.
+    """
     if model is None:
-        # Model not loaded — return safe default (fail-open)
         return {"phoneDetected": False, "confidence": 0.0, "detections": []}
 
     try:
+        pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         img_array = np.array(pil_image)
         results = model(img_array, verbose=False)
 
@@ -92,16 +97,31 @@ async def detect_phone(image: UploadFile = File(...)):
                     })
                     max_confidence = max(max_confidence, confidence)
 
-        phone_detected = len(phone_detections) > 0
-
         return {
-            "phoneDetected": phone_detected,
+            "phoneDetected": len(phone_detections) > 0,
             "confidence": max_confidence,
             "detections": phone_detections,
         }
     except Exception as e:
         print(f"[YOLO] Inference error: {e}")
         return {"phoneDetected": False, "confidence": 0.0, "detections": []}
+
+
+@app.post("/detect")
+async def detect_phone(image: UploadFile = File(...)):
+    """
+    Receive a webcam frame and detect whether a phone is present.
+    Offloads CPU inference to worker thread pool for high concurrency (FR-7.2).
+    Returns: { phoneDetected: bool, confidence: float, detections: list }
+    """
+    try:
+        image_bytes = await image.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image upload: {str(e)}")
+
+    # Offload CPU inference to worker thread pool
+    result = await run_in_threadpool(_run_inference_sync, image_bytes)
+    return result
 
 
 if __name__ == "__main__":
