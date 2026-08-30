@@ -1,5 +1,5 @@
 // AdminQuestionBank.jsx — Question Bank & Question Set Management
-// Implements PRD Section 9.4, Section 11.4 (FR-4.1, FR-4.2)
+// Implements PRD Section 8.2 (aiTestBriefFiles), Section 9.4, Section 11.4 (FR-4.1, FR-4.2)
 import React, { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import AdminNavbar from '../../shared/AdminNavbar';
