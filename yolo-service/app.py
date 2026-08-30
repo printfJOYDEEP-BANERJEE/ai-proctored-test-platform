@@ -32,10 +32,20 @@ CONFIDENCE_THRESHOLD = 0.45  # Minimum confidence to flag as phone detected
 async def load_model():
     global model
     try:
+        import torch
+        # PyTorch 2.6 compatibility: allow loading trusted ultralytics checkpoint
+        _orig_torch_load = torch.load
+        def safe_load(*args, **kwargs):
+            kwargs['weights_only'] = False
+            return _orig_torch_load(*args, **kwargs)
+        torch.load = safe_load
+
         from ultralytics import YOLO
         model_path = os.path.join(os.path.dirname(__file__), "model", "yolov8n.pt")
+        if not os.path.exists(model_path):
+            model_path = "yolov8n.pt"
         model = YOLO(model_path)
-        print(f"[YOLO] Model loaded from {model_path}")
+        print(f"[YOLO] Model loaded successfully: {model_path}")
     except Exception as e:
         print(f"[YOLO] WARNING: Model failed to load: {e}")
         print("[YOLO] Service will return phoneDetected=false for all frames.")
