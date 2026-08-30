@@ -1,9 +1,9 @@
 // Shared Navbar component — Globussoft branding (Section 14)
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../../hooks/useAuthContext';
+import { useAuth } from '../hooks/useAuthContext';
 import toast from 'react-hot-toast';
-import api from '../../services/apiClient';
+import api from '../services/apiClient';
 
 export default function AdminNavbar() {
   const { user, logout, isSuperAdmin } = useAuth();
