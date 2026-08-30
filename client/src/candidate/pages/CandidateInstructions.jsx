@@ -1,5 +1,5 @@
 // CandidateInstructions — show test.instructions before start-attempt
-// Also requests webcam permission and enters fullscreen (FR-5.2)
+// Explicitly requests and verifies mandatory Webcam AND Microphone permissions before starting (FR-5.2)
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/apiClient';
@@ -9,6 +9,7 @@ export default function CandidateInstructions() {
   const navigate = useNavigate();
   const [joinData, setJoinData] = useState(null);
   const [webcamGranted, setWebcamGranted] = useState(false);
+  const [micGranted, setMicGranted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const videoRef = useRef(null);
@@ -23,23 +24,45 @@ export default function CandidateInstructions() {
     setJoinData(JSON.parse(stored));
   }, [navigate]);
 
-  const requestWebcam = async () => {
+  // FR-5.2: Mandatory Webcam + Mic permission check
+  const requestMediaPermissions = async () => {
+    setError('');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: true,
+      });
+
       streamRef.current = stream;
+      const videoTracks = stream.getVideoTracks();
+      const audioTracks = stream.getAudioTracks();
+
+      const hasVideo = videoTracks.length > 0 && videoTracks[0].enabled;
+      const hasAudio = audioTracks.length > 0 && audioTracks[0].enabled;
+
+      setWebcamGranted(hasVideo);
+      setMicGranted(hasAudio);
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
-      setWebcamGranted(true);
-      toast.success('Webcam access granted!');
+
+      if (hasVideo && hasAudio) {
+        toast.success('Webcam and Microphone access verified!');
+      } else {
+        setError('Both camera and microphone access are required.');
+      }
     } catch (err) {
-      setError('Webcam access is required to take this test. Please grant permission and try again.');
+      setWebcamGranted(false);
+      setMicGranted(false);
+      setError('Camera and Microphone access are mandatory to take this proctored test. Please grant permissions in your browser and try again.');
     }
   };
 
   const handleStartTest = async () => {
-    if (!webcamGranted) {
-      setError('Please grant webcam access before starting.');
+    // Strict requirement 1: Block start action until both permissions are granted
+    if (!webcamGranted || !micGranted) {
+      setError('Both camera and microphone permissions must be granted before starting the test (FR-5.2).');
       return;
     }
 
@@ -61,11 +84,7 @@ export default function CandidateInstructions() {
         candidateStartTime: data.candidateStartTime,
         candidateEndTime: data.candidateEndTime,
         submissionSessionId: data.submissionSessionId,
-        webcamStream: null, // stream passed via ref context if needed
       }));
-
-      // Stop preview stream (proctoring module will manage the actual stream)
-      // The stream stays active for proctoring — don't stop it here
 
       // Navigate based on test type
       if (joinData.test.testType === 'AI_TEST') {
@@ -74,10 +93,9 @@ export default function CandidateInstructions() {
         navigate('/candidate/test');
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to start test');
-      // Exit fullscreen on error
+      setError(err.response?.data?.error || 'Failed to start test attempt');
       if (document.fullscreenElement) {
-        document.exitFullscreen();
+        document.exitFullscreen().catch(() => {});
       }
     } finally {
       setLoading(false);
@@ -85,6 +103,8 @@ export default function CandidateInstructions() {
   };
 
   if (!joinData) return null;
+
+  const isPermissionsComplete = webcamGranted && micGranted;
 
   return (
     <div style={{ minHeight: '100vh', background: '#F7F9FA', display: 'flex', flexDirection: 'column' }}>
@@ -115,24 +135,24 @@ export default function CandidateInstructions() {
               <h2 className="card-title">📋 Test Instructions</h2>
             </div>
             <div
-              style={{ lineHeight: 1.7, color: '#374151', whiteSpace: 'pre-wrap' }}
+              style={{ lineHeight: 1.7, color: '#374151', whiteSpace: 'pre-wrap', fontSize: '0.875rem' }}
               dangerouslySetInnerHTML={{ __html: joinData.instructions }}
             />
 
             <div style={{ marginTop: 24 }}>
               <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1A2B3C', marginBottom: 12 }}>
-                ⚠️ Important Rules
+                ⚠️ Mandatory Proctoring Rules
               </h3>
               <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {[
-                  'Stay in fullscreen mode throughout the test. Exiting fullscreen will be flagged.',
-                  'Do not switch tabs or minimize the browser window. This will be flagged.',
-                  'Do not use your mobile phone. Phone detection is active.',
-                  'Copy-paste from external sources is disabled in the code editor.',
-                  'Your webcam must be visible and unobstructed at all times.',
-                  'The test will auto-submit when time expires.',
+                  'Stay in fullscreen mode throughout the test. Exiting fullscreen will be logged as a violation.',
+                  'Do not switch tabs or minimize the browser window. Tab switches are logged with proof.',
+                  'Do not use your mobile phone. Automated AI phone detection is active.',
+                  'Copy-paste and context menus are disabled.',
+                  'Your webcam and microphone must remain active and unobstructed at all times.',
+                  'The test will automatically submit when your countdown timer expires.',
                 ].map((rule, i) => (
-                  <li key={i} style={{ display: 'flex', gap: 10, fontSize: '0.875rem', color: '#374151' }}>
+                  <li key={i} style={{ display: 'flex', gap: 10, fontSize: '0.85rem', color: '#374151' }}>
                     <span style={{ color: '#E74C3C', flexShrink: 0 }}>✗</span>
                     {rule}
                   </li>
@@ -141,11 +161,11 @@ export default function CandidateInstructions() {
             </div>
           </div>
 
-          {/* Webcam + Start panel */}
+          {/* Media Permission Verification & Start Panel */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div className="card">
               <div className="card-header">
-                <h3 className="card-title">📸 Webcam Check</h3>
+                <h3 className="card-title">📸 Device Permissions (FR-5.2)</h3>
               </div>
               <div style={{
                 width: '100%',
@@ -170,7 +190,7 @@ export default function CandidateInstructions() {
                 ) : (
                   <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>
                     <div style={{ fontSize: '2.5rem', marginBottom: 8 }}>📷</div>
-                    <div style={{ fontSize: '0.8rem' }}>Camera not started</div>
+                    <div style={{ fontSize: '0.8rem' }}>Webcam &amp; Mic Not Connected</div>
                   </div>
                 )}
                 {webcamGranted && (
@@ -179,47 +199,63 @@ export default function CandidateInstructions() {
                     background: '#2ECC71', borderRadius: 4, padding: '2px 8px',
                     fontSize: '0.7rem', fontWeight: 700, color: 'white',
                   }}>
-                    ● LIVE
+                    ● LIVE PREVIEW
                   </div>
                 )}
               </div>
 
-              {!webcamGranted ? (
+              {/* Status Indicators for Webcam & Mic */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+                  <span style={{ color: '#4b5563' }}>Webcam:</span>
+                  <span style={{ fontWeight: 600, color: webcamGranted ? '#2ECC71' : '#E74C3C' }}>
+                    {webcamGranted ? '✅ Granted' : '❌ Not Granted'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+                  <span style={{ color: '#4b5563' }}>Microphone:</span>
+                  <span style={{ fontWeight: 600, color: micGranted ? '#2ECC71' : '#E74C3C' }}>
+                    {micGranted ? '✅ Granted' : '❌ Not Granted'}
+                  </span>
+                </div>
+              </div>
+
+              {!isPermissionsComplete ? (
                 <button
-                  id="grant-webcam-btn"
+                  id="grant-media-btn"
                   className="btn btn-secondary"
                   style={{ width: '100%' }}
-                  onClick={requestWebcam}
+                  onClick={requestMediaPermissions}
                 >
-                  📷 Grant Camera Access
+                  📷 Grant Camera &amp; Mic Access
                 </button>
               ) : (
-                <div className="alert alert-success" style={{ margin: 0 }}>
-                  ✅ Camera active — you're ready!
+                <div className="alert alert-success" style={{ margin: 0, fontSize: '0.8rem' }}>
+                  ✅ Devices verified — ready to begin!
                 </div>
               )}
             </div>
 
-            {error && <div className="alert alert-danger">{error}</div>}
+            {error && <div className="alert alert-danger" style={{ fontSize: '0.8rem' }}>{error}</div>}
 
             <div className="card" style={{ background: '#1A2B3C', borderColor: '#1A2B3C' }}>
               <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.8rem', marginBottom: 12 }}>
-                By clicking Start, you agree to be monitored via webcam. The test will enter fullscreen mode.
+                Clicking Start will initiate your timer and lock the browser in full-screen mode.
               </div>
               <button
                 id="start-test-btn"
                 className="btn btn-primary btn-lg"
                 style={{ width: '100%' }}
                 onClick={handleStartTest}
-                disabled={loading || !webcamGranted}
+                disabled={loading || !isPermissionsComplete}
               >
                 {loading
                   ? <><span className="spinner" /> Starting test...</>
                   : '🚀 Start Test — Enter Fullscreen'}
               </button>
-              {!webcamGranted && (
-                <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem', textAlign: 'center', marginTop: 8 }}>
-                  Grant webcam access first
+              {!isPermissionsComplete && (
+                <p style={{ color: '#f87171', fontSize: '0.75rem', textAlign: 'center', marginTop: 8 }}>
+                  🔒 Camera &amp; Mic access must be granted to start
                 </p>
               )}
             </div>

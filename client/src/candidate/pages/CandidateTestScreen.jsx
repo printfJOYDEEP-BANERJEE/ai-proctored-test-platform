@@ -15,6 +15,7 @@ import {
   onTestEnded, offTestEnded,
 } from '../../services/socketClient';
 import { useAuth } from '../../hooks/useAuthContext';
+import { useProctoring } from '../../hooks/useProctoring';
 
 // ── Monaco Editor (lazy-loaded to avoid bundle bloat) ─────────────────────────
 import Editor from '@monaco-editor/react';
@@ -164,41 +165,14 @@ export default function CandidateTestScreen() {
     return () => clearInterval(heartbeatRef.current);
   }, [session, user, activeQuestion, questionProgress]);
 
-  // ── FR-5.2: Fullscreen enforcement ────────────────────────────────────────────
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      if (!document.fullscreenElement && session && !disqualified) {
-        // FR-5.2: fullscreen exit fires event and captures screenshot proof
-        emitFullscreenExit({
-          candidateId: user.id,
-          testId: session.test._id,
-          roomId: session.room._id,
-        });
-        // Report violation via REST (will be handled fully in Module 5/proctoring)
-        // For now, we send the socket event. The full screenshot capture is in proctoringHook.
-        toast.error('⚠️ You exited fullscreen! This has been flagged.', { duration: 5000 });
-      }
-    };
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  }, [session, user, disqualified]);
-
-  // ── FR-5.3: Tab switch detection ─────────────────────────────────────────────
-  useEffect(() => {
-    if (!session) return;
-    const handleVisibilityChange = () => {
-      if (document.hidden && !disqualified) {
-        emitTabSwitch({
-          candidateId: user.id,
-          testId: session.test._id,
-          roomId: session.room._id,
-        });
-        toast.error('⚠️ Tab switch detected! This has been flagged.', { duration: 5000 });
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [session, user, disqualified]);
+  // ── Client-Side AI Proctoring (FR-5.2, FR-5.3, FR-5.4, FR-7.1, FR-7.2) ────────
+  const proctoring = useProctoring({
+    testId: session?.test?._id,
+    roomId: session?.room?._id,
+    candidateId: user?.id,
+    enabled: Boolean(session && user && !disqualified),
+    allowInternalCopyPaste: false,
+  });
 
   // ── Socket: candidate:warning + candidate:disqualified + test:ended ───────────
   useEffect(() => {
@@ -612,6 +586,92 @@ export default function CandidateTestScreen() {
           </div>
         </div>
       </div>
+
+      {/* ── Corner AI Proctoring PIP Feed (FR-5.2, FR-7.1, FR-7.2) ── */}
+      <div
+        style={{
+          position: 'fixed',
+          bottom: 16,
+          right: 16,
+          zIndex: 1000,
+          background: '#1A2B3C',
+          padding: 6,
+          borderRadius: 8,
+          boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
+          border: '1.5px solid #334155',
+        }}
+      >
+        <div style={{ position: 'relative', width: 130, height: 98, borderRadius: 6, overflow: 'hidden', background: '#000' }}>
+          <video
+            ref={proctoring.videoRef}
+            autoPlay
+            muted
+            playsInline
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+          <div style={{ position: 'absolute', top: 4, left: 4, background: 'rgba(0,0,0,0.65)', padding: '2px 6px', borderRadius: 4, fontSize: '0.62rem', color: '#2ECC71', fontWeight: 700 }}>
+            ● REC
+          </div>
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 4,
+              left: 4,
+              right: 4,
+              background:
+                proctoring.faceCount === 1
+                  ? 'rgba(46, 204, 113, 0.85)'
+                  : proctoring.faceCount > 1
+                  ? 'rgba(231, 76, 60, 0.95)'
+                  : 'rgba(241, 196, 15, 0.95)',
+              padding: '2px 4px',
+              borderRadius: 3,
+              fontSize: '0.6rem',
+              color: '#fff',
+              textAlign: 'center',
+              fontWeight: 600,
+            }}
+          >
+            {proctoring.faceCount === 1
+              ? '✓ Face Detected'
+              : proctoring.faceCount > 1
+              ? '⚠️ Multiple Faces!'
+              : '❌ No Face!'}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Fullscreen Enforcement Lock Overlay (FR-5.2, FR-5.3) ── */}
+      {!proctoring.isFullscreen && !disqualified && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.96)',
+            zIndex: 9999,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+          }}
+        >
+          <div style={{ fontSize: '3.5rem', marginBottom: 12 }}>⚠️</div>
+          <h2 style={{ color: '#fff', fontSize: '1.6rem', marginBottom: 8, fontWeight: 800 }}>
+            Fullscreen Mode Required
+          </h2>
+          <p style={{ color: '#94a3b8', maxWidth: 480, textAlign: 'center', marginBottom: 24, lineHeight: 1.6, fontSize: '0.9rem' }}>
+            You have exited full-screen mode. This proctored assessment strictly requires fullscreen operation throughout the entire session (FR-5.2). Exiting has been logged.
+          </p>
+          <button
+            onClick={proctoring.requestFullscreen}
+            className="btn btn-primary btn-lg"
+            style={{ fontSize: '1rem', padding: '12px 28px' }}
+          >
+            ⛶ Re-enter Fullscreen Mode
+          </button>
+        </div>
+      )}
     </div>
   );
 }
