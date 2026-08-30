@@ -1,0 +1,126 @@
+version: '3.9'
+
+services:
+  # ── MongoDB ───────────────────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7.0
+    container_name: apt_mongodb
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: ai_proctored_test_platform
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend (Node.js + Express + Socket.io) ───────────────────────────────────
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: apt_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/ai_proctored_test_platform
+      - YOLO_SERVICE_URL=http://yolo-service:8001
+      - JUDGE0_API_URL=http://judge0:2358
+    ports:
+      - "5000:5000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ./server:/app
+      - /app/node_modules
+
+  # ── Frontend (React) ──────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: apt_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    environment:
+      - REACT_APP_API_URL=http://localhost:5000/api/v1
+      - REACT_APP_SOCKET_URL=http://localhost:5000
+
+  # ── YOLO Phone Detection Microservice ────────────────────────────────────────
+  yolo-service:
+    build:
+      context: ./yolo-service
+      dockerfile: Dockerfile
+    container_name: apt_yolo
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./yolo-service/model:/app/model
+
+  # ── Judge0 (Code Execution Engine) ───────────────────────────────────────────
+  # Self-hosted Judge0 via official Docker Compose setup (Section 15)
+  # For full Judge0 setup, download docker-compose.yml from github.com/judge0/judge0
+  # and run separately. These services are the core required for basic operation.
+  judge0:
+    image: judge0/judge0:1.13.1
+    container_name: apt_judge0
+    restart: unless-stopped
+    ports:
+      - "2358:2358"
+    privileged: true
+    environment:
+      REDIS_HOST: redis
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0password
+    depends_on:
+      - redis
+      - postgres
+
+  judge0-workers:
+    image: judge0/judge0:1.13.1
+    container_name: apt_judge0_workers
+    restart: unless-stopped
+    command: ["./scripts/workers"]
+    privileged: true
+    environment:
+      REDIS_HOST: redis
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0password
+    depends_on:
+      - judge0
+      - redis
+      - postgres
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: apt_redis
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: apt_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  mongo_data:
+  postgres_data:
