@@ -102,6 +102,8 @@ export const api = {
   regenerateShortlist: (testId) => axios.post(`/tests/${testId}/shortlist/regenerate`),
   exportShortlistPdf: (testId) =>
     axios.get(`/tests/${testId}/shortlist/export-pdf`, { responseType: 'blob' }),
+  getCopyPasteLog: (submissionId) =>
+    axios.get(`/submissions/${submissionId}/copy-paste-log`),
 };
 
 export default api;
