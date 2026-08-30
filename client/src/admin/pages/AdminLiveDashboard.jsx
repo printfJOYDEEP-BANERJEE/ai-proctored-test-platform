@@ -1,8 +1,9 @@
 // AdminLiveDashboard.jsx — Live Monitoring Dashboard & Seat Map
-// Implements PRD Section 9.8, Section 10 (Exact Socket.io Events), Section 11.7 (FR-7.3, FR-7.4), Section 11.8 (FR-8.1, FR-8.2, FR-8.3), Section 13 (NFR: 200ms debounce, React.memo)
+// Implements PRD Section 9.8, Section 10 (Exact Socket.io Events), Section 11.7 (FR-7.3 persistent malpractice counter, FR-7.4), Section 11.8 (FR-8.1, FR-8.2, FR-8.3), Section 13 (NFR: 200ms debounce, React.memo, react-window virtualization for >50 items)
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { List } from 'react-window';
 import AdminNavbar from '../../shared/AdminNavbar';
 import api from '../../services/apiClient';
 import { useAuth } from '../../hooks/useAuthContext';
@@ -24,16 +25,17 @@ const STATUS_COLORS = {
   WHITE: '#e5e7eb',
 };
 
-// ── Memoized Seat Tile (NFR: React.memo for high-frequency seat map updates) ───
+// ── Memoized Seat Tile (FR-7.3: Persistent Malpractice counter beside name) ────
 const SeatTile = memo(({ candidate, roomName, onClick }) => {
   const color = STATUS_COLORS[candidate.colorStatus] || STATUS_COLORS.WHITE;
   const isWhite = candidate.colorStatus === 'WHITE' || !candidate.colorStatus;
+  const malpracticeCount = candidate.malpracticeCount || 0;
 
   return (
     <div
       onClick={() => onClick(candidate)}
       style={{
-        background: isWhite ? '#ffffff' : `${color}18`,
+        background: isWhite ? '#ffffff' : `${color}15`,
         border: `2px solid ${isWhite ? '#e5e7eb' : color}`,
         borderRadius: 10,
         padding: '12px 14px',
@@ -42,29 +44,46 @@ const SeatTile = memo(({ candidate, roomName, onClick }) => {
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
-        minHeight: 110,
-        boxShadow: isWhite ? 'none' : `0 2px 8px ${color}25`,
+        minHeight: 115,
+        boxShadow: isWhite ? 'none' : `0 2px 8px ${color}20`,
         position: 'relative',
         overflow: 'hidden',
       }}
       className="seat-tile-hover"
     >
-      {/* Top Status Bar indicator */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <span
-          style={{
-            fontWeight: 700,
-            fontSize: '0.85rem',
-            color: '#1A2B3C',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            maxWidth: '75%',
-          }}
-          title={candidate.name}
-        >
-          {candidate.name || 'Candidate'}
-        </span>
+      {/* Top Header: Candidate Name + Persistent Malpractice Counter (FR-7.3) */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}>
+          <strong
+            style={{
+              fontSize: '0.85rem',
+              color: '#1A2B3C',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+            title={candidate.name}
+          >
+            {candidate.name || 'Candidate'}
+          </strong>
+
+          {/* FR-7.3: Persistent Malpractice Counter directly beside candidate name */}
+          <span
+            className={`badge ${malpracticeCount > 0 ? 'badge-danger' : 'badge-secondary'}`}
+            style={{
+              fontSize: '0.65rem',
+              padding: '1px 5px',
+              fontWeight: 700,
+              flexShrink: 0,
+              backgroundColor: malpracticeCount > 0 ? '#E74C3C' : '#f3f4f6',
+              color: malpracticeCount > 0 ? '#ffffff' : '#6b7280',
+              border: malpracticeCount > 0 ? 'none' : '1px solid #e5e7eb',
+            }}
+            title={`Persistent Malpractice Counter: ${malpracticeCount} violations`}
+          >
+            ⚠️ {malpracticeCount}
+          </span>
+        </div>
 
         {/* Status dot / badge */}
         <span
@@ -75,6 +94,7 @@ const SeatTile = memo(({ candidate, roomName, onClick }) => {
             backgroundColor: color,
             display: 'inline-block',
             boxShadow: `0 0 6px ${color}`,
+            flexShrink: 0,
           }}
           title={`Status: ${candidate.colorStatus || 'WHITE'}`}
         />
@@ -84,11 +104,11 @@ const SeatTile = memo(({ candidate, roomName, onClick }) => {
       <div style={{ margin: '6px 0', fontSize: '0.75rem', color: '#6b7280' }}>
         <div>{roomName || 'Room'}</div>
         <div style={{ fontWeight: 600, color: '#374151', marginTop: 2 }}>
-          {candidate.questionsCompleted !== undefined ? `${candidate.questionsCompleted} Qs Completed` : 'Not started'}
+          {candidate.questionsCompleted !== undefined ? `${candidate.questionsCompleted} Qs Solved` : 'Not started'}
         </div>
       </div>
 
-      {/* Bottom Footer: Timer & Malpractice Counter */}
+      {/* Bottom Footer: Timer */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem', marginTop: 4 }}>
         <span style={{ color: '#4b5563', fontFamily: 'monospace', fontWeight: 600 }}>
           {candidate.timeRemaining !== undefined
@@ -96,104 +116,138 @@ const SeatTile = memo(({ candidate, roomName, onClick }) => {
             : '—'}
         </span>
 
-        {candidate.malpracticeCount > 0 && (
-          <span
-            className="badge badge-danger"
-            style={{ fontSize: '0.65rem', padding: '2px 6px', fontWeight: 700 }}
-            title={`${candidate.malpracticeCount} malpractice violations logged`}
-          >
-            ⚠️ {candidate.malpracticeCount}
-          </span>
-        )}
+        <span
+          style={{
+            fontSize: '0.65rem',
+            color: color === '#F1C40F' ? '#b45309' : color,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+          }}
+        >
+          {candidate.colorStatus || 'WHITE'}
+        </span>
       </div>
     </div>
   );
 });
 
-// ── Memoized Candidate Table Row (NFR: React.memo) ────────────────────────────
-const CandidateRow = memo(({ candidate, roomName, onSelect, onWarn, onDisqualify }) => {
+// ── Memoized Table Row Component (FR-7.3: Persistent Malpractice counter beside name) ──
+const CandidateRowItem = memo(({ candidate, roomName, onSelect, onWarn, onDisqualify, style }) => {
   const color = STATUS_COLORS[candidate.colorStatus] || STATUS_COLORS.WHITE;
+  const malpracticeCount = candidate.malpracticeCount || 0;
 
   return (
-    <tr>
-      <td>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: '50%',
-              backgroundColor: color,
-              display: 'inline-block',
-            }}
-          />
-          <strong style={{ color: '#1A2B3C' }}>{candidate.name}</strong>
-        </div>
-      </td>
-      <td style={{ color: '#4b5563', fontSize: '0.85rem' }}>{roomName}</td>
-      <td>
+    <div
+      style={{
+        ...style,
+        display: 'grid',
+        gridTemplateColumns: '2fr 1.2fr 1.2fr 1fr 1.2fr 1.2fr 1.5fr',
+        alignItems: 'center',
+        padding: '8px 16px',
+        borderBottom: '1px solid #f3f4f6',
+        fontSize: '0.85rem',
+        background: 'white',
+      }}
+    >
+      {/* Candidate Name + Persistent Malpractice Counter (FR-7.3) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
+        <span
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            backgroundColor: color,
+            flexShrink: 0,
+          }}
+        />
+        <strong style={{ color: '#1A2B3C', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {candidate.name}
+        </strong>
+        {/* FR-7.3: Persistent Malpractice counter directly beside name */}
+        <span
+          className={`badge ${malpracticeCount > 0 ? 'badge-danger' : 'badge-secondary'}`}
+          style={{
+            fontSize: '0.65rem',
+            padding: '1px 5px',
+            fontWeight: 700,
+            flexShrink: 0,
+            backgroundColor: malpracticeCount > 0 ? '#E74C3C' : '#f3f4f6',
+            color: malpracticeCount > 0 ? '#ffffff' : '#6b7280',
+            border: malpracticeCount > 0 ? 'none' : '1px solid #e5e7eb',
+          }}
+          title={`Persistent Malpractice Counter: ${malpracticeCount}`}
+        >
+          ⚠️ {malpracticeCount}
+        </span>
+      </div>
+
+      <div style={{ color: '#4b5563' }}>{roomName}</div>
+
+      <div>
         <span
           className="badge"
           style={{
             background: `${color}20`,
             color: color === '#F1C40F' ? '#b45309' : color,
             border: `1px solid ${color}60`,
-            fontSize: '0.75rem',
+            fontSize: '0.72rem',
             fontWeight: 600,
           }}
         >
           {candidate.status || candidate.colorStatus || 'IN_PROGRESS'}
         </span>
-      </td>
-      <td style={{ color: '#1A2B3C', fontWeight: 600, fontSize: '0.85rem' }}>
+      </div>
+
+      <div style={{ color: '#1A2B3C', fontWeight: 600 }}>
         {candidate.questionsCompleted ?? 0}
-      </td>
-      <td>
-        {candidate.malpracticeCount > 0 ? (
-          <span className="badge badge-danger" style={{ fontSize: '0.75rem', fontWeight: 700 }}>
-            ⚠️ {candidate.malpracticeCount} Incidents
+      </div>
+
+      <div>
+        {malpracticeCount > 0 ? (
+          <span className="badge badge-danger" style={{ fontSize: '0.72rem', fontWeight: 700 }}>
+            {malpracticeCount} Violations
           </span>
         ) : (
-          <span style={{ color: '#2ECC71', fontSize: '0.8rem' }}>✓ Clean</span>
+          <span style={{ color: '#2ECC71', fontSize: '0.75rem' }}>✓ Clean (0)</span>
         )}
-      </td>
-      <td style={{ color: '#6b7280', fontSize: '0.85rem', fontFamily: 'monospace' }}>
+      </div>
+
+      <div style={{ color: '#6b7280', fontFamily: 'monospace', fontSize: '0.8rem' }}>
         {candidate.timeRemaining !== undefined
           ? `${Math.floor(candidate.timeRemaining / 60000)}m ${Math.floor((candidate.timeRemaining % 60000) / 1000)}s`
           : '—'}
-      </td>
-      <td style={{ textAlign: 'right' }}>
-        <div style={{ display: 'inline-flex', gap: 6 }}>
-          <button
-            onClick={() => onSelect(candidate)}
-            className="btn btn-secondary"
-            style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-          >
-            Inspect
-          </button>
-          {candidate.status !== 'DISQUALIFIED' && (
-            <>
-              <button
-                onClick={() => onWarn(candidate)}
-                className="btn btn-secondary"
-                style={{ padding: '4px 8px', fontSize: '0.75rem', color: '#d97706' }}
-                title="Send Warning"
-              >
-                Warn
-              </button>
-              <button
-                onClick={() => onDisqualify(candidate)}
-                className="btn btn-danger"
-                style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                title="Disqualify Candidate (FR-7.4)"
-              >
-                Disqualify
-              </button>
-            </>
-          )}
-        </div>
-      </td>
-    </tr>
+      </div>
+
+      <div style={{ textAlign: 'right', display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+        <button
+          onClick={() => onSelect(candidate)}
+          className="btn btn-secondary"
+          style={{ padding: '3px 8px', fontSize: '0.72rem' }}
+        >
+          Inspect
+        </button>
+        {candidate.status !== 'DISQUALIFIED' && (
+          <>
+            <button
+              onClick={() => onWarn(candidate)}
+              className="btn btn-secondary"
+              style={{ padding: '3px 6px', fontSize: '0.72rem', color: '#d97706' }}
+              title="Send Warning"
+            >
+              Warn
+            </button>
+            <button
+              onClick={() => onDisqualify(candidate)}
+              className="btn btn-danger"
+              style={{ padding: '3px 6px', fontSize: '0.72rem' }}
+              title="Disqualify Candidate (FR-7.4)"
+            >
+              Disqualify
+            </button>
+          </>
+        )}
+      </div>
+    </div>
   );
 });
 
@@ -215,7 +269,7 @@ export default function AdminLiveDashboard() {
   const [candidatesMap, setCandidatesMap] = useState({});
 
   // Live Alerts Queue (FR-7.3)
-  const [activeAlert, setActiveAlert] = useState(null); // Current modal alert
+  const [activeAlert, setActiveAlert] = useState(null);
   const [alertQueue, setAlertQueue] = useState([]);
 
   // Selected candidate for inspect drawer
@@ -275,7 +329,7 @@ export default function AdminLiveDashboard() {
   const announceCandidateSubmission = useCallback((name) => {
     if (!voiceEnabled || !window.speechSynthesis) return;
     try {
-      window.speechSynthesis.cancel(); // cancel any pending speech
+      window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(`${name} has submitted the test.`);
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
@@ -297,7 +351,6 @@ export default function AdminLiveDashboard() {
 
     // Section 10.2: dashboard:update
     const handleDashboardUpdate = (data) => {
-      // Buffer for 200ms debounce
       const cid = data.candidateId;
       if (!cid) return;
 
@@ -337,7 +390,7 @@ export default function AdminLiveDashboard() {
     const handleMalpracticeAlert = (alertData) => {
       console.log('[Socket] Malpractice Alert received:', alertData);
       
-      // Update candidate's malpractice counter in map
+      // Update candidate's persistent malpractice counter in map (FR-7.3)
       if (alertData.candidateId) {
         setCandidatesMap((prev) => {
           const current = prev[alertData.candidateId] || {};
@@ -351,8 +404,7 @@ export default function AdminLiveDashboard() {
         });
       }
 
-      // Show toast + enqueue popup
-      toast.error(`⚠️ Malpractice Detected: ${alertData.candidateName} (${alertData.violationType})`, {
+      toast.error(`⚠️ Malpractice: ${alertData.candidateName} (${alertData.violationType})`, {
         duration: 5000,
       });
 
@@ -376,7 +428,6 @@ export default function AdminLiveDashboard() {
       setTest((t) => (t ? { ...t, status: 'ENDED' } : t));
     };
 
-    // Subscribe
     onDashboardUpdate(handleDashboardUpdate);
     onSeatmapStatus(handleSeatmapStatus);
     onMalpracticeAlert(handleMalpracticeAlert);
@@ -424,7 +475,6 @@ export default function AdminLiveDashboard() {
     }
   };
 
-  // Quick Action from Table
   const handleManualWarn = (candidate) => {
     toast(`Sent warning to ${candidate.name}`, { icon: '⚠️' });
   };
@@ -432,7 +482,6 @@ export default function AdminLiveDashboard() {
   const handleManualDisqualify = async (candidate) => {
     if (!window.confirm(`Are you sure you want to DISQUALIFY ${candidate.name}?`)) return;
     try {
-      // Disqualify updates local status immediately
       setCandidatesMap((prev) => ({
         ...prev,
         [candidate.candidateId]: {
@@ -447,14 +496,13 @@ export default function AdminLiveDashboard() {
     }
   };
 
-  // Build room lookup map
   const roomsById = useMemo(() => {
     const map = {};
     rooms.forEach((r) => { map[r._id] = r.roomName; });
     return map;
   }, [rooms]);
 
-  // Filter candidates array
+  // Filter candidates
   const candidateList = useMemo(() => {
     return Object.values(candidatesMap).filter((c) => {
       const matchesRoom = selectedRoomId === 'ALL' || c.roomId === selectedRoomId;
@@ -484,6 +532,22 @@ export default function AdminLiveDashboard() {
       totalMalpractice,
     };
   }, [candidatesMap]);
+
+  // Section 13 NFR Virtualized Row Renderer for >50 items
+  const VirtualizedRow = useCallback(({ index, style }) => {
+    const candidate = candidateList[index];
+    if (!candidate) return null;
+    return (
+      <CandidateRowItem
+        candidate={candidate}
+        roomName={roomsById[candidate.roomId] || 'Room'}
+        onSelect={setInspectCandidate}
+        onWarn={handleManualWarn}
+        onDisqualify={handleManualDisqualify}
+        style={style}
+      />
+    );
+  }, [candidateList, roomsById]);
 
   if (loading) {
     return (
@@ -603,13 +667,13 @@ export default function AdminLiveDashboard() {
           </div>
         </div>
 
-        {/* ── Section 11.8: Seat Map Visualization ── */}
+        {/* ── Section 11.8: Seat Map Visualization (FR-7.3 Persistent Counter) ── */}
         <div className="card" style={{ marginBottom: 24 }}>
           <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <h3 className="card-title">Live Physical Seat Map (FR-8.1, FR-8.2)</h3>
               <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 2 }}>
-                Real-time visual map updated dynamically via <code>seatmap:status</code> socket events.
+                Persistent violation counters (<code>⚠️ count</code>) visible directly on each seat tile (FR-7.3).
               </p>
             </div>
 
@@ -646,7 +710,7 @@ export default function AdminLiveDashboard() {
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
                 gap: 14,
                 padding: '8px 0',
               }}
@@ -663,10 +727,17 @@ export default function AdminLiveDashboard() {
           )}
         </div>
 
-        {/* ── Candidate Roster & Proctoring Table ── */}
+        {/* ── Candidate Roster & Proctoring Table (Section 13: react-window Virtualization) ── */}
         <div className="card">
           <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-            <h3 className="card-title">Candidate Live Proctoring Roster</h3>
+            <div>
+              <h3 className="card-title">Candidate Live Proctoring Roster</h3>
+              <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 2 }}>
+                {candidateList.length > 50
+                  ? `⚡ Virtualized View Active (${candidateList.length} candidates — 60fps steady)`
+                  : `Showing ${candidateList.length} connected candidate(s)`}
+              </p>
+            </div>
 
             {/* Table Filters */}
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -693,41 +764,56 @@ export default function AdminLiveDashboard() {
             </div>
           </div>
 
-          <div className="table-container">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Candidate</th>
-                  <th>Room</th>
-                  <th>Status</th>
-                  <th>Qs Solved</th>
-                  <th>Malpractice</th>
-                  <th>Time Left</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {candidateList.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} style={{ textAlign: 'center', padding: 32, color: '#6b7280' }}>
-                      No matching candidates connected.
-                    </td>
-                  </tr>
-                ) : (
-                  candidateList.map((c) => (
-                    <CandidateRow
-                      key={c.candidateId}
-                      candidate={c}
-                      roomName={roomsById[c.roomId] || 'Room'}
-                      onSelect={setInspectCandidate}
-                      onWarn={handleManualWarn}
-                      onDisqualify={handleManualDisqualify}
-                    />
-                  ))
-                )}
-              </tbody>
-            </table>
+          {/* Table Header Bar */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '2fr 1.2fr 1.2fr 1fr 1.2fr 1.2fr 1.5fr',
+              padding: '10px 16px',
+              background: '#f9fafb',
+              borderBottom: '1.5px solid #e5e7eb',
+              fontWeight: 700,
+              fontSize: '0.8rem',
+              color: '#374151',
+            }}
+          >
+            <div>Candidate (FR-7.3 Counter)</div>
+            <div>Room</div>
+            <div>Status</div>
+            <div>Qs Solved</div>
+            <div>Malpractice</div>
+            <div>Time Left</div>
+            <div style={{ textAlign: 'right' }}>Actions</div>
           </div>
+
+          {/* Table Body: Virtualized with react-window when > 50 candidates, standard when <= 50 */}
+          {candidateList.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 32, color: '#6b7280', fontSize: '0.85rem' }}>
+              No matching candidates connected.
+            </div>
+          ) : candidateList.length > 50 ? (
+            // Section 13 NFR: react-window List Virtualization for > 50 candidates
+            <List
+              rowComponent={VirtualizedRow}
+              rowCount={candidateList.length}
+              rowHeight={48}
+              style={{ height: 450 }}
+            />
+          ) : (
+            // Standard render for <= 50 candidates
+            <div>
+              {candidateList.map((c) => (
+                <CandidateRowItem
+                  key={c.candidateId}
+                  candidate={c}
+                  roomName={roomsById[c.roomId] || 'Room'}
+                  onSelect={setInspectCandidate}
+                  onWarn={handleManualWarn}
+                  onDisqualify={handleManualDisqualify}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ── Live Malpractice Alert Modal (FR-7.3, FR-7.4) ── */}
@@ -881,7 +967,7 @@ export default function AdminLiveDashboard() {
 
                 <div style={{ background: '#f9fafb', padding: 14, borderRadius: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: '0.85rem' }}>
                   <div>
-                    <span style={{ color: '#6b7280' }}>Questions Completed:</span>
+                    <span style={{ color: '#6b7280' }}>Questions Solved:</span>
                     <strong style={{ display: 'block', color: '#1A2B3C', fontSize: '1.05rem', marginTop: 2 }}>
                       {inspectCandidate.questionsCompleted ?? 0}
                     </strong>
