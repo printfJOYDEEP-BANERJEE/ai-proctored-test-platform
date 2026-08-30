@@ -4,11 +4,11 @@ const router = express.Router();
 const { createRoom, getRooms, deleteRoom, getRoomCandidates } = require('../controllers/roomController');
 const { verifyToken, requireAdmin } = require('../middleware/authMiddleware');
 
-router.use(verifyToken, requireAdmin);
+const adminAuth = [verifyToken, requireAdmin];
 
-router.post('/tests/:testId/rooms', createRoom);
-router.get('/tests/:testId/rooms', getRooms);
-router.delete('/rooms/:roomId', deleteRoom);
-router.get('/rooms/:roomId/candidates', getRoomCandidates);
+router.post('/tests/:testId/rooms', adminAuth, createRoom);
+router.get('/tests/:testId/rooms', adminAuth, getRooms);
+router.delete('/rooms/:roomId', adminAuth, deleteRoom);
+router.get('/rooms/:roomId/candidates', adminAuth, getRoomCandidates);
 
 module.exports = router;

@@ -8,16 +8,16 @@ const {
 } = require('../controllers/testController');
 const { verifyToken, requireAdmin } = require('../middleware/authMiddleware');
 
-router.use(verifyToken, requireAdmin); // All test routes require admin auth
+const adminAuth = [verifyToken, requireAdmin];
 
-router.post('/tests', createTest);
-router.get('/tests', getTests);
-router.get('/tests/:testId', getTest);
-router.patch('/tests/:testId', updateTest);
-router.patch('/tests/:testId/passing-criteria', updatePassingCriteria);
-router.patch('/tests/:testId/malpractice-threshold', updateMalpracticeThreshold);
-router.delete('/tests/:testId', deleteTest);
-router.post('/tests/:testId/start', startTest);
-router.post('/tests/:testId/end', endTest);
+router.post('/tests', adminAuth, createTest);
+router.get('/tests', adminAuth, getTests);
+router.get('/tests/:testId', adminAuth, getTest);
+router.patch('/tests/:testId', adminAuth, updateTest);
+router.patch('/tests/:testId/passing-criteria', adminAuth, updatePassingCriteria);
+router.patch('/tests/:testId/malpractice-threshold', adminAuth, updateMalpracticeThreshold);
+router.delete('/tests/:testId', adminAuth, deleteTest);
+router.post('/tests/:testId/start', adminAuth, startTest);
+router.post('/tests/:testId/end', adminAuth, endTest);
 
 module.exports = router;

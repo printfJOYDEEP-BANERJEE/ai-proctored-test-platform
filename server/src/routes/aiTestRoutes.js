@@ -4,11 +4,11 @@ const router = express.Router();
 const { aiChat, saveFiles, submitAiTest, getPreview } = require('../controllers/aiTestController');
 const { verifyToken, requireCandidate } = require('../middleware/authMiddleware');
 
-router.use(verifyToken, requireCandidate);
+const candidateAuth = [verifyToken, requireCandidate];
 
-router.post('/ai-test/:questionId/chat', aiChat);
-router.post('/ai-test/:questionId/save-files', saveFiles);
-router.post('/ai-test/:questionId/submit', submitAiTest);
-router.get('/ai-test/:questionId/preview', getPreview);
+router.post('/ai-test/:questionId/chat', candidateAuth, aiChat);
+router.post('/ai-test/:questionId/save-files', candidateAuth, saveFiles);
+router.post('/ai-test/:questionId/submit', candidateAuth, submitAiTest);
+router.get('/ai-test/:questionId/preview', candidateAuth, getPreview);
 
 module.exports = router;

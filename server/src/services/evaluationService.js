@@ -195,17 +195,20 @@ const runFinalEvaluationPass = async (testId) => {
     const test = await Test.findById(testId);
     if (!test) return;
 
-    // Evaluate all SUBMITTED submissions that don't have an EvaluationResult yet
+    // Auto-mark any remaining IN_PROGRESS submissions as AUTO_SUBMITTED_TIME_UP
+    await Submission.updateMany(
+      { testId, status: 'IN_PROGRESS' },
+      { status: 'AUTO_SUBMITTED_TIME_UP', submittedAt: new Date() }
+    );
+
+    // Find all submissions for this test
     const pendingSubmissions = await Submission.find({
       testId,
       status: { $in: ['SUBMITTED', 'AUTO_SUBMITTED_TIME_UP', 'AUTO_SUBMITTED_DISQUALIFIED'] },
     });
 
     for (const sub of pendingSubmissions) {
-      const existing = await EvaluationResult.findOne({ submissionId: sub._id });
-      if (!existing) {
-        await evaluateSingleSubmission(sub._id.toString());
-      }
+      await evaluateSingleSubmission(sub._id.toString());
     }
 
     // Aggregate per-candidate total scores

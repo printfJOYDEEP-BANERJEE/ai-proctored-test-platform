@@ -26,8 +26,10 @@ const getResults = async (req, res, next) => {
 const getShortlist = async (req, res, next) => {
   try {
     const { testId } = req.params;
-    const shortlist = await Shortlist.findOne({ testId });
-    if (!shortlist) return res.status(404).json({ error: 'Shortlist not yet generated' });
+    let shortlist = await Shortlist.findOne({ testId });
+    if (!shortlist) {
+      shortlist = await shortlistService.regenerate(testId);
+    }
     res.json({ shortlist });
   } catch (err) {
     next(err);

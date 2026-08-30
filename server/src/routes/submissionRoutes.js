@@ -7,15 +7,14 @@ const {
 } = require('../controllers/submissionController');
 const { verifyToken, requireCandidate } = require('../middleware/authMiddleware');
 
-// All submission routes require candidate auth
-router.use(verifyToken, requireCandidate);
+const candidateAuth = [verifyToken, requireCandidate];
 
-router.post('/rooms/join', joinRoom);
-router.post('/tests/:testId/start-attempt', startAttempt);
-router.get('/tests/:testId/questions/:questionId', getQuestion);
-router.post('/submissions/:questionId/run', runCode);
-router.post('/submissions/:questionId/save', saveCode);
-router.post('/submissions/:questionId/submit', submitCode);
-router.post('/tests/:testId/submit-all', submitAll);
+router.post('/rooms/join', candidateAuth, joinRoom);
+router.post('/tests/:testId/start-attempt', candidateAuth, startAttempt);
+router.get('/tests/:testId/questions/:questionId', candidateAuth, getQuestion);
+router.post('/submissions/:questionId/run', candidateAuth, runCode);
+router.post('/submissions/:questionId/save', candidateAuth, saveCode);
+router.post('/submissions/:questionId/submit', candidateAuth, submitCode);
+router.post('/tests/:testId/submit-all', candidateAuth, submitAll);
 
 module.exports = router;
