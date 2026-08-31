@@ -14,7 +14,6 @@ const candidateSchema = new mongoose.Schema({
 });
 
 // Section 8.3 — required indexes
-candidateSchema.index({ email: 1 }, { unique: true });
-// expiresAt TTL index is defined inline above per Mongoose TTL index convention
+// email unique index and expiresAt TTL index are defined inline above per Mongoose convention
 
 module.exports = mongoose.model('Candidate', candidateSchema);

@@ -12,7 +12,6 @@ const roomSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
-// Section 8.3 — required index
-roomSchema.index({ roomCode: 1 }, { unique: true });
+// Section 8.3 — required index (roomCode unique index defined inline on field)
 
 module.exports = mongoose.model('Room', roomSchema);

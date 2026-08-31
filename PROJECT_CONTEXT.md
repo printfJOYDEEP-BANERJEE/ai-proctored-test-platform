@@ -76,7 +76,6 @@ ai-proctored-test-platform/
 │   ├── package.json
 │   ├── vite.config.js
 │   ├── Dockerfile
-│   ├── pyrightconfig.json
 │   └── src/
 │       ├── main.jsx               # Application entry point
 │       ├── App.jsx                # Router & Global Providers
@@ -375,17 +374,16 @@ docker-compose up --build
 1. **Fair Candidate Timers**: Each candidate's countdown timer starts individually upon entering the room (`candidateStartTime`), preventing unfair time loss if room creation was earlier (FR-5.1).
 2. **Hidden Test Case Security**: `hiddenTestCases` are strictly stripped from candidate API responses and only executed securely inside Judge0 sandbox evaluation (FR-4.2).
 3. **Dual-Layer Proctoring**: Lightweight MediaPipe Vision WASM handles high-frequency face detection client-side to save server CPU, while high-risk phone detection is offloaded to the FastAPI YOLO thread pool (FR-7.2).
-4. **Python 3.14 Compatibility**: Dependencies in `yolo-service/requirements.txt` use `>=` minimum version constraints to allow installing Python 3.14 pre-built wheels on Windows.
-5. **IDE Settings Preserved**: [.vscode/settings.json](file:///c:/Users/JOYDEEP/OneDrive/Desktop/spoj%20test%20website/.vscode/settings.json) and [pyrightconfig.json](file:///c:/Users/JOYDEEP/OneDrive/Desktop/spoj%20test%20website/ai-proctored-test-platform/yolo-service/pyrightconfig.json) are configured to resolve `.venv` packages cleanly in Antigravity IDE and VS Code.
-6. **Git Remote**: Repository connected to GitHub (`git@github.com:printfJOYDEEP-BANERJEE/ai-proctored-test-platform.git`).
+4. **Mongoose Duplicate Index Warning Clean-up**: Fixed duplicate index declarations on `Candidate` (`email`) and `Room` (`roomCode`), eliminating all Mongoose startup warnings.
+5. **Python 3.14 Compatibility**: Dependencies in `yolo-service/requirements.txt` use `>=` minimum version constraints to allow installing Python 3.14 pre-built wheels on Windows.
+6. **IDE Settings Preserved**: [.vscode/settings.json](file:///c:/Users/JOYDEEP/OneDrive/Desktop/spoj%20test%20website/.vscode/settings.json) and [pyrightconfig.json](file:///c:/Users/JOYDEEP/OneDrive/Desktop/spoj%20test%20website/ai-proctored-test-platform/yolo-service/pyrightconfig.json) are configured to resolve `.venv` packages cleanly in Antigravity IDE and VS Code.
+7. **Git Remote**: Repository connected to GitHub (`git@github.com:printfJOYDEEP-BANERJEE/ai-proctored-test-platform.git`).
 
 ---
 
 ## 9. Next Recommended Tasks for Incoming Developers / AI
 
-1. **Mongoose Duplicate Index Warning Clean-up**:
-   - Clean up schema-level inline `unique: true` vs `.index()` calls in `Candidate.js` and `Room.js` to silence non-fatal MongoDB startup warnings.
-2. **Production Kimi & Cloudinary Credentials**:
+1. **Production Kimi & Cloudinary Credentials**:
    - Configure live API keys for Kimi LLM and Cloudinary in `.env` when deploying to production environments (currently using local fallbacks/stubs in development).
-3. **SSH Key Registration on GitHub**:
+2. **SSH Key Registration on GitHub**:
    - Register your local SSH key (`~/.ssh/id_ed25519.pub`) on GitHub account settings if pushing directly over SSH (`git@github.com:...`).
