@@ -23,7 +23,7 @@ CONFIDENCE_THRESHOLD = 0.45  # Minimum confidence to flag as phone detected
 async def lifespan(app: FastAPI):
     global model
     try:
-        import torch
+        import torch  # type: ignore
         # PyTorch 2.6 compatibility: allow loading trusted ultralytics checkpoint
         _orig_torch_load = torch.load
 
@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
 
         torch.load = safe_load
 
-        from ultralytics import YOLO
+        from ultralytics import YOLO  # type: ignore
 
         model_path = os.path.join(os.path.dirname(__file__), "model", "yolov8n.pt")
         if not os.path.exists(model_path):

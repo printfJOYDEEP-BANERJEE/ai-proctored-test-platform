@@ -1,0 +1,11 @@
+{
+  "name": "ai-proctored-test-platform",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "start \"Backend\" cmd /k \"cd server && npm start\" && cd client && npm run dev",
+    "dev:server": "cd server && npm start",
+    "dev:client": "cd client && npm run dev",
+    "install:all": "cd server && npm install && cd ../client && npm install"
+  }
+}
