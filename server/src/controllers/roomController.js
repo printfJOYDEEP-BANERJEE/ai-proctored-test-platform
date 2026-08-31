@@ -121,31 +121,130 @@ const getRoomCandidates = async (req, res, next) => {
     const room = await Room.findById(req.params.roomId);
     if (!room) return res.status(404).json({ error: 'Room not found' });
 
-    // Find all submissions for this room to get candidate list
+    // Fetch all submissions for this room, sorted newest first
     const submissions = await Submission.find({ roomId: req.params.roomId })
       .populate('candidateId', 'name email phone isDisqualified')
-      .distinct('candidateId');
+      .sort({ createdAt: -1 });
 
-    // Get unique candidates who have joined this room
-    const candidateSubmissions = await Submission.find({ roomId: req.params.roomId })
-      .populate('candidateId', 'name email phone isDisqualified')
-      .select('candidateId status visibleTestCasesPassed visibleTestCasesTotal');
+    // Fetch malpractice incident counts for this room
+    const MalpracticeLog = require('../models/MalpracticeLog');
+    const malpracticeLogs = await MalpracticeLog.find({ roomId: req.params.roomId });
+    const malpracticeCounts = {};
+    malpracticeLogs.forEach((log) => {
+      const cid = log.candidateId?.toString();
+      if (cid) malpracticeCounts[cid] = (malpracticeCounts[cid] || 0) + 1;
+    });
 
-    // Deduplicate by candidateId
-    const seen = new Set();
-    const candidates = [];
-    for (const sub of candidateSubmissions) {
-      const id = sub.candidateId?._id?.toString();
-      if (id && !seen.has(id)) {
-        seen.add(id);
-        candidates.push(sub.candidateId);
+    // Deduplicate by candidateId, preserving real-time status & progress
+    const candidateMap = {};
+    for (const sub of submissions) {
+      const candidate = sub.candidateId;
+      if (!candidate) continue;
+      const cid = candidate._id.toString();
+
+      if (!candidateMap[cid]) {
+        const isDisqualified = candidate.isDisqualified || sub.status === 'AUTO_SUBMITTED_DISQUALIFIED';
+        let status = sub.status || 'IN_PROGRESS';
+        if (isDisqualified) {
+          status = 'DISQUALIFIED';
+        }
+
+        candidateMap[cid] = {
+          _id: cid,
+          candidateId: cid,
+          name: candidate.name,
+          email: candidate.email,
+          phone: candidate.phone,
+          isDisqualified,
+          status, // 'IN_PROGRESS' | 'SUBMITTED' | 'AUTO_SUBMITTED_TIME_UP' | 'DISQUALIFIED'
+          questionsCompleted: sub.questionsCompleted || 0,
+          submittedAt: sub.submittedAt || null,
+          startedAt: sub.candidateStartTime || sub.createdAt,
+          candidateEndTime: sub.candidateEndTime,
+          malpracticeCount: malpracticeCounts[cid] || 0,
+        };
       }
     }
 
-    res.json({ candidates });
+    res.json({ candidates: Object.values(candidateMap), room });
   } catch (err) {
     next(err);
   }
 };
 
-module.exports = { createRoom, getRooms, deleteRoom, getRoomCandidates };
+// ── GET /tests/:testId/live-candidates ───────────────────────────────────────
+// Fetches all active candidates currently in progress for the live dashboard
+const getLiveCandidates = async (req, res, next) => {
+  try {
+    const { testId } = req.params;
+    const test = await Test.findById(testId);
+    if (!test) return res.status(404).json({ error: 'Test not found' });
+
+    // Fetch all submissions for this test
+    const submissions = await Submission.find({ testId })
+      .populate('candidateId', 'name email isDisqualified')
+      .populate('roomId', 'roomName roomCode');
+
+    // Fetch all malpractice logs for this test
+    const MalpracticeLog = require('../models/MalpracticeLog');
+    const malpracticeLogs = await MalpracticeLog.find({ testId });
+    const malpracticeCounts = {};
+    malpracticeLogs.forEach((log) => {
+      const cid = log.candidateId?.toString();
+      if (cid) malpracticeCounts[cid] = (malpracticeCounts[cid] || 0) + 1;
+    });
+
+    const candidateMap = {};
+    const now = Date.now();
+
+    for (const sub of submissions) {
+      const candidate = sub.candidateId;
+      if (!candidate) continue;
+      const cid = candidate._id.toString();
+
+      if (!candidateMap[cid]) {
+        const timeRemaining = sub.candidateEndTime
+          ? Math.max(0, new Date(sub.candidateEndTime).getTime() - now)
+          : 0;
+
+        let colorStatus = 'YELLOW';
+        if (candidate.isDisqualified) {
+          colorStatus = 'RED';
+        } else if (sub.status === 'SUBMITTED' || sub.status === 'AUTO_SUBMITTED_TIME_UP') {
+          colorStatus = 'GREEN';
+        }
+
+        candidateMap[cid] = {
+          candidateId: cid,
+          name: candidate.name,
+          email: candidate.email,
+          roomId: sub.roomId?._id ? sub.roomId._id.toString() : sub.roomId?.toString(),
+          roomName: sub.roomId?.roomName || 'Unassigned Room',
+          status: candidate.isDisqualified ? 'DISQUALIFIED' : sub.status,
+          timeRemaining,
+          questionsCompleted: sub.visibleTestCasesPassed > 0 ? 1 : 0,
+          malpracticeCount: malpracticeCounts[cid] || 0,
+          colorStatus,
+        };
+      } else {
+        if (sub.visibleTestCasesPassed > 0) {
+          candidateMap[cid].questionsCompleted += 1;
+        }
+      }
+    }
+
+    // Recalculate colorStatus based on test passing criteria
+    for (const cid of Object.keys(candidateMap)) {
+      const c = candidateMap[cid];
+      if (!c.isDisqualified && test.passingCriteria && c.questionsCompleted >= test.passingCriteria) {
+        c.colorStatus = 'GREEN';
+      }
+    }
+
+    res.json({ candidates: candidateMap });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { createRoom, getRooms, deleteRoom, getRoomCandidates, getLiveCandidates };

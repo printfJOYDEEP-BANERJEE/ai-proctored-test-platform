@@ -5,6 +5,16 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import AdminNavbar from '../../shared/AdminNavbar';
 import api from '../../services/apiClient';
+import {
+  initSocket,
+  emitAdminJoin,
+  onCandidateSubmitted,
+  offCandidateSubmitted,
+  onDashboardUpdate,
+  offDashboardUpdate,
+  onRoomUpdated,
+  offRoomUpdated,
+} from '../../services/socketClient';
 
 export default function AdminTestDetail() {
   const { testId } = useParams();
@@ -66,6 +76,50 @@ export default function AdminTestDetail() {
   useEffect(() => {
     fetchTestAndRooms();
   }, [fetchTestAndRooms]);
+
+  // Real-time Socket sync & live refresh for Room Candidates Modal
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token || !testId) return;
+
+    initSocket(token);
+    emitAdminJoin({ testId });
+
+    const refreshRoster = () => {
+      if (selectedRoomCandidates?.room?._id) {
+        api.getRoomCandidates(selectedRoomCandidates.room._id)
+          .then((res) => {
+            setSelectedRoomCandidates((prev) => (prev ? { ...prev, list: res.data.candidates || [] } : prev));
+          })
+          .catch(() => {});
+      }
+    };
+
+    onCandidateSubmitted(refreshRoster);
+    onDashboardUpdate(refreshRoster);
+    onRoomUpdated(() => {
+      fetchTestAndRooms();
+      refreshRoster();
+    });
+
+    return () => {
+      offCandidateSubmitted(refreshRoster);
+      offDashboardUpdate(refreshRoster);
+      offRoomUpdated();
+    };
+  }, [testId, selectedRoomCandidates?.room?._id, fetchTestAndRooms]);
+
+  // Polling fallback when Room Candidates Modal is open (3s interval)
+  useEffect(() => {
+    if (!selectedRoomCandidates?.room?._id) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await api.getRoomCandidates(selectedRoomCandidates.room._id);
+        setSelectedRoomCandidates((prev) => (prev ? { ...prev, list: res.data.candidates || [] } : prev));
+      } catch (_) {}
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [selectedRoomCandidates?.room?._id]);
 
   // Handle Start Test (DRAFT -> LIVE)
   const handleStartTest = async () => {
@@ -770,14 +824,25 @@ export default function AdminTestDetail() {
           </div>
         )}
 
-        {/* ── Room Candidates Modal ── */}
+        {/* ── Room Candidates Modal with Real-time Status Sync (FR-3.3, FR-8.3) ── */}
         {selectedRoomCandidates && (
           <div className="modal-backdrop" onClick={() => setSelectedRoomCandidates(null)}>
-            <div className="modal-container" style={{ maxWidth: 650 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-container" style={{ maxWidth: 720 }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
-                <h3 className="modal-title">
-                  Candidates in {selectedRoomCandidates.room.roomName}
-                </h3>
+                <div>
+                  <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                    Candidates in Room {selectedRoomCandidates.room.roomName || selectedRoomCandidates.room.roomCode}
+                  </h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                    <span className="badge badge-teal" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                      Code: {selectedRoomCandidates.room.roomCode}
+                    </span>
+                    <span style={{ fontSize: '0.75rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 600 }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
+                      Live Sync Active
+                    </span>
+                  </div>
+                </div>
                 <button
                   type="button"
                   onClick={() => setSelectedRoomCandidates(null)}
@@ -786,13 +851,13 @@ export default function AdminTestDetail() {
                   ✕
                 </button>
               </div>
-              <div className="modal-body" style={{ maxHeight: 400, overflowY: 'auto' }}>
+              <div className="modal-body" style={{ maxHeight: 420, overflowY: 'auto' }}>
                 {loadingCandidates ? (
-                  <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
+                  <div style={{ display: 'flex', justifyContent: 'center', padding: 32 }}>
                     <div className="spinner spinner-dark" style={{ width: 28, height: 28 }} />
                   </div>
                 ) : selectedRoomCandidates.list.length === 0 ? (
-                  <p style={{ color: '#6b7280', textAlign: 'center', padding: 24 }}>
+                  <p style={{ color: '#6b7280', textAlign: 'center', padding: 28 }}>
                     No candidates have joined this room yet.
                   </p>
                 ) : (
@@ -801,22 +866,42 @@ export default function AdminTestDetail() {
                       <tr>
                         <th>Candidate Name</th>
                         <th>Email</th>
-                        <th>Phone</th>
+                        <th>Questions</th>
+                        <th>Violations</th>
                         <th>Status</th>
+                        <th>Submitted At</th>
                       </tr>
                     </thead>
                     <tbody>
                       {selectedRoomCandidates.list.map((c) => (
-                        <tr key={c._id}>
-                          <td style={{ fontWeight: 600 }}>{c.name}</td>
-                          <td style={{ color: '#4b5563' }}>{c.email}</td>
-                          <td style={{ color: '#6b7280' }}>{c.phone || '—'}</td>
+                        <tr key={c._id || c.candidateId}>
+                          <td style={{ fontWeight: 600, color: '#1A2B3C' }}>{c.name}</td>
+                          <td style={{ color: '#4b5563', fontSize: '0.8rem' }}>{c.email}</td>
+                          <td style={{ fontWeight: 600, color: '#0E7C86' }}>
+                            {c.questionsCompleted ?? 0}
+                          </td>
                           <td>
-                            {c.isDisqualified ? (
-                              <span className="badge badge-danger">Disqualified</span>
+                            {(c.malpracticeCount || 0) > 0 ? (
+                              <span className="badge badge-danger" style={{ fontSize: '0.72rem', padding: '2px 6px' }}>
+                                ⚠️ {c.malpracticeCount}
+                              </span>
                             ) : (
-                              <span className="badge badge-success">Active</span>
+                              <span style={{ color: '#2ECC71', fontSize: '0.75rem' }}>✓ Clean</span>
                             )}
+                          </td>
+                          <td>
+                            {c.isDisqualified || c.status === 'DISQUALIFIED' ? (
+                              <span className="badge badge-danger">🚫 Disqualified</span>
+                            ) : c.status === 'SUBMITTED' ? (
+                              <span className="badge badge-success">✓ Submitted</span>
+                            ) : c.status === 'AUTO_SUBMITTED_TIME_UP' ? (
+                              <span className="badge badge-teal">⏱ Auto-Submitted</span>
+                            ) : (
+                              <span className="badge badge-primary">⏳ In Progress</span>
+                            )}
+                          </td>
+                          <td style={{ color: '#6b7280', fontSize: '0.78rem' }}>
+                            {c.submittedAt ? new Date(c.submittedAt).toLocaleTimeString() : '—'}
                           </td>
                         </tr>
                       ))}
@@ -824,7 +909,10 @@ export default function AdminTestDetail() {
                   </table>
                 )}
               </div>
-              <div className="modal-footer">
+              <div className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', color: '#6b7280' }}>
+                  Total: <strong>{selectedRoomCandidates.list.length}</strong> candidate{selectedRoomCandidates.list.length === 1 ? '' : 's'}
+                </span>
                 <button
                   type="button"
                   onClick={() => setSelectedRoomCandidates(null)}
