@@ -16,6 +16,7 @@ import {
 } from '../../services/socketClient';
 import { useAuth } from '../../hooks/useAuthContext';
 import { useProctoring } from '../../hooks/useProctoring';
+import DraggableWebcamPip from '../../shared/DraggableWebcamPip';
 
 // ── Monaco Editor (lazy-loaded to avoid bundle bloat) ─────────────────────────
 import Editor from '@monaco-editor/react';
@@ -645,59 +646,8 @@ export default function CandidateTestScreen() {
         </div>
       </div>
 
-      {/* ── Corner AI Proctoring PIP Feed (FR-5.2, FR-7.1, FR-7.2) ── */}
-      <div
-        style={{
-          position: 'fixed',
-          bottom: 16,
-          right: 16,
-          zIndex: 1000,
-          background: '#1A2B3C',
-          padding: 6,
-          borderRadius: 8,
-          boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
-          border: '1.5px solid #334155',
-        }}
-      >
-        <div style={{ position: 'relative', width: 130, height: 98, borderRadius: 6, overflow: 'hidden', background: '#000' }}>
-          <video
-            ref={proctoring.videoRef}
-            autoPlay
-            muted
-            playsInline
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-          />
-          <div style={{ position: 'absolute', top: 4, left: 4, background: 'rgba(0,0,0,0.65)', padding: '2px 6px', borderRadius: 4, fontSize: '0.62rem', color: '#2ECC71', fontWeight: 700 }}>
-            ● REC
-          </div>
-          <div
-            style={{
-              position: 'absolute',
-              bottom: 4,
-              left: 4,
-              right: 4,
-              background:
-                proctoring.faceCount === 1
-                  ? 'rgba(46, 204, 113, 0.85)'
-                  : proctoring.faceCount > 1
-                  ? 'rgba(231, 76, 60, 0.95)'
-                  : 'rgba(241, 196, 15, 0.95)',
-              padding: '2px 4px',
-              borderRadius: 3,
-              fontSize: '0.6rem',
-              color: '#fff',
-              textAlign: 'center',
-              fontWeight: 600,
-            }}
-          >
-            {proctoring.faceCount === 1
-              ? '✓ Face Detected'
-              : proctoring.faceCount > 1
-              ? '⚠️ Multiple Faces!'
-              : '❌ No Face!'}
-          </div>
-        </div>
-      </div>
+      {/* ── Movable AI Proctoring PIP Feed (FR-5.2, FR-7.1, FR-7.2) ── */}
+      <DraggableWebcamPip videoRef={proctoring.videoRef} faceCount={proctoring.faceCount} />
 
       {/* ── Fullscreen Enforcement Lock Overlay (FR-5.2, FR-5.3) ── */}
       {!proctoring.isFullscreen && !disqualified && (
