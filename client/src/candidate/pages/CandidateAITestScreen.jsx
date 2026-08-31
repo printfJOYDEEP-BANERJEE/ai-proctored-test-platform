@@ -384,39 +384,72 @@ export default function CandidateAITestScreen() {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#0f172a' }}>
-      {/* ── Top Timer Bar ──────────────────────────────────────────────────── */}
-      <div className="timer-bar" style={{ zIndex: 100 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <span style={{ color: 'white', fontWeight: 700, fontSize: '0.9rem' }}>
-            🤖 {session.test.title} (AI Test)
-          </span>
-          <span className="badge badge-teal">{session.room.roomName}</span>
-          {isSaving && <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.75rem' }}>💾 Saving...</span>}
+      {/* ── Fixed Stacked Header: (a) Test name + Room/ID row, then (b) Timer + Action row ── */}
+      <div className="test-screen-header">
+        {/* Row (a): Test Name & Room ID Badge */}
+        <div className="test-header-top-row">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              background: '#0E7C86', borderRadius: '50%', width: 28, height: 28,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.85rem'
+            }}>
+              🤖
+            </div>
+            <span style={{ color: 'white', fontWeight: 700, fontSize: '0.95rem', letterSpacing: '0.01em' }}>
+              {session.test.title} <span style={{ color: '#38bdf8', fontSize: '0.85rem', fontWeight: 600 }}>(AI Test)</span>
+            </span>
+            <span className="badge badge-teal" style={{ fontSize: '0.75rem', padding: '3px 10px' }}>
+              {session.room.roomName || session.room.roomCode}
+            </span>
+            {isSaving && <span style={{ color: '#38bdf8', fontSize: '0.75rem' }}>💾 Saving...</span>}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span style={{ fontSize: '0.8rem', color: 'rgba(255, 255, 255, 0.7)' }}>
+              Candidate: <strong style={{ color: 'white' }}>{user?.name || user?.email}</strong>
+            </span>
+          </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Time Remaining</span>
-          <span className={`timer-countdown ${urgency}`} aria-live="polite">
-            {timerDisplay}
-          </span>
-        </div>
+        {/* Row (b): Timer & Actions */}
+        <div className="timer-bar">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.85rem', fontWeight: 500 }}>
+              Status:
+            </span>
+            <span style={{ color: 'white', fontWeight: 600, fontSize: '0.85rem' }}>
+              {submittedQuestions.has(activeQuestion?._id) ? '✓ Current Task Submitted' : 'In Progress'}
+            </span>
+          </div>
 
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <button
-            id="ai-submit-question-btn"
-            className="btn btn-primary btn-sm"
-            onClick={handleSubmitQuestion}
-            disabled={isSubmitting || submittedQuestions.has(activeQuestion?._id)}
-          >
-            {isSubmitting ? 'Submitting...' : submittedQuestions.has(activeQuestion?._id) ? '✓ Submitted' : 'Submit Project'}
-          </button>
-          <button
-            id="ai-submit-all-btn"
-            className="btn btn-danger btn-sm"
-            onClick={handleSubmitAll}
-          >
-            Submit All &amp; Finish
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.85rem', fontWeight: 600 }}>
+              Time Remaining:
+            </span>
+            <span className={`timer-countdown ${urgency}`} aria-live="polite" aria-label="Time remaining">
+              {timerDisplay}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <button
+              id="ai-submit-question-btn"
+              className="btn btn-primary btn-sm"
+              onClick={handleSubmitQuestion}
+              disabled={isSubmitting || submittedQuestions.has(activeQuestion?._id)}
+              style={{ fontWeight: 600 }}
+            >
+              {isSubmitting ? 'Submitting...' : submittedQuestions.has(activeQuestion?._id) ? '✓ Submitted' : 'Submit Project'}
+            </button>
+            <button
+              id="ai-submit-all-btn"
+              className="btn btn-danger btn-sm"
+              onClick={handleSubmitAll}
+              style={{ fontWeight: 700, padding: '6px 16px' }}
+            >
+              Submit All &amp; Finish
+            </button>
+          </div>
         </div>
       </div>
 
