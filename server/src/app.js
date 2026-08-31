@@ -66,12 +66,17 @@ app.use((err, req, res, next) => {
 });
 
 // ── MongoDB connection ────────────────────────────────────────────────────────
+const { seedSuperAdmin } = require('./seed');
+
 mongoose
   .connect(process.env.MONGODB_URI, {
     serverSelectionTimeoutMS: 5000,
   })
-  .then(() => {
+  .then(async () => {
     console.log('[MongoDB] Connected successfully');
+    // Ensure Super Admin exists in database
+    await seedSuperAdmin();
+
     // Register Socket.io handlers after DB is ready
     registerSocketHandlers(io);
 
