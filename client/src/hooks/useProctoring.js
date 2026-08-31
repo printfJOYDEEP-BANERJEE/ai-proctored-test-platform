@@ -44,67 +44,88 @@ export function useProctoring({
   // Debounce refs for violations (prevent spamming API within 10s per violation type)
   const lastViolationTimeRef = useRef({});
 
-  // ── Helper: Capture Webcam Screenshot (Base64) ──────────────────────────────
-  const captureWebcamScreenshot = useCallback(() => {
-    if (!videoRef.current || videoRef.current.readyState < 2) return null;
+  // ── Helper: Capture Real-time Proof Screenshot for any Violation ──────────────
+  const captureViolationProof = useCallback((violationType) => {
     try {
-      const canvas = document.createElement('canvas');
-      canvas.width = videoRef.current.videoWidth || 640;
-      canvas.height = videoRef.current.videoHeight || 480;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-      return canvas.toDataURL('image/jpeg', 0.8);
-    } catch (e) {
-      console.error('Failed to capture webcam frame:', e);
-      return null;
-    }
-  }, []);
+      if (videoRef.current && videoRef.current.readyState >= 2) {
+        const vw = videoRef.current.videoWidth || 640;
+        const vh = videoRef.current.videoHeight || 480;
 
-  // ── Helper: Capture Screen Snapshot (Base64) for TAB_SWITCH / FULLSCREEN_EXIT ─
-  const captureScreenSnapshot = useCallback(() => {
-    try {
+        const canvas = document.createElement('canvas');
+        canvas.width = vw;
+        canvas.height = vh;
+        const ctx = canvas.getContext('2d');
+
+        // 1. Draw live webcam frame
+        ctx.drawImage(videoRef.current, 0, 0, vw, vh);
+
+        // 2. Overlay proctoring violation watermark header
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.fillRect(0, 0, vw, 40);
+
+        // Violation badge indicator
+        ctx.fillStyle = violationType === 'PHONE_DETECTED' || violationType === 'MULTIPLE_FACES' ? '#EF4444' : '#F59E0B';
+        ctx.font = 'bold 13px sans-serif';
+        ctx.fillText(`⚠️ PROCTORING EVIDENCE: ${violationType.replace(/_/g, ' ')}`, 14, 25);
+
+        // Timestamp & metadata footer
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+        ctx.fillRect(0, vh - 26, vw, 26);
+        ctx.fillStyle = '#E2E8F0';
+        ctx.font = '11px monospace';
+        ctx.fillText(`Time: ${new Date().toLocaleTimeString()} · ${new Date().toLocaleDateString()}`, 14, vh - 9);
+
+        return canvas.toDataURL('image/jpeg', 0.85);
+      }
+
+      // Fallback: create high-visibility violation banner snapshot
       const canvas = document.createElement('canvas');
-      canvas.width = window.innerWidth || 1280;
-      canvas.height = window.innerHeight || 720;
+      canvas.width = 640;
+      canvas.height = 480;
       const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#1A2B3C';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, 640, 480);
+      ctx.fillStyle = '#EF4444';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText(`⚠️ PROCTORING VIOLATION: ${violationType.replace(/_/g, ' ')}`, 30, 80);
       ctx.fillStyle = '#ffffff';
-      ctx.font = '24px Inter, sans-serif';
-      ctx.fillText(`Globussoft Assessment Proctoring Snapshot`, 40, 60);
-      ctx.font = '16px monospace';
-      ctx.fillText(`Candidate ID: ${candidateId} | Timestamp: ${new Date().toISOString()}`, 40, 100);
-      ctx.fillText(`Window Dimensions: ${window.innerWidth}x${window.innerHeight}`, 40, 130);
-      return canvas.toDataURL('image/jpeg', 0.8);
+      ctx.font = '13px monospace';
+      ctx.fillText(`Detected At: ${new Date().toLocaleString()}`, 30, 130);
+      ctx.fillText(`Candidate ID: ${candidateId}`, 30, 160);
+      ctx.fillText(`Test ID: ${testId} | Room: ${roomId}`, 30, 190);
+      return canvas.toDataURL('image/jpeg', 0.85);
     } catch (e) {
-      console.error('Failed to capture screen snapshot:', e);
+      console.error('Failed to capture violation proof:', e);
       return null;
     }
-  }, [candidateId]);
+  }, [candidateId, testId, roomId]);
 
   // ── Helper: Report Violation with Debounce ──────────────────────────────────
   const reportViolation = useCallback(async (violationType, screenshotBase64) => {
     const now = Date.now();
     const lastTime = lastViolationTimeRef.current[violationType] || 0;
-    if (now - lastTime < 10000) {
-      // Throttle violation reports to at most once per 10s per type
+    if (now - lastTime < 5000) {
+      // Throttle violation reports to at most once per 5s per type
       return;
     }
     lastViolationTimeRef.current[violationType] = now;
 
-    console.warn(`[Proctoring] Reporting violation: ${violationType}`);
+    // Capture real-time proof frame if none explicitly provided
+    const proof = screenshotBase64 || captureViolationProof(violationType);
+
+    console.warn(`[Proctoring] Reporting violation: ${violationType} with proof screenshot`);
     try {
       await api.reportViolation({
         candidateId,
         testId,
         roomId,
         violationType,
-        screenshotBase64: screenshotBase64 || captureWebcamScreenshot() || '',
+        screenshotBase64: proof,
       });
     } catch (err) {
       console.error(`[Proctoring] Failed to report ${violationType}:`, err);
     }
-  }, [candidateId, testId, roomId, captureWebcamScreenshot]);
+  }, [candidateId, testId, roomId, captureViolationProof]);
 
   // ── 1. Mandatory Media Stream Initialization (FR-5.2) ───────────────────────
   const initMediaStream = useCallback(async () => {
@@ -311,7 +332,7 @@ export function useProctoring({
 
       if (!inFullscreen) {
         emitFullscreenExit({ candidateId, testId, roomId });
-        const proof = captureScreenSnapshot();
+        const proof = captureViolationProof('FULLSCREEN_EXIT');
         reportViolation('FULLSCREEN_EXIT', proof);
         toast.error('⚠️ Fullscreen exited! You must remain in full-screen mode.', { duration: 4000 });
       }
@@ -324,7 +345,7 @@ export function useProctoring({
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
     };
-  }, [enabled, candidateId, testId, roomId, captureScreenSnapshot, reportViolation]);
+  }, [enabled, candidateId, testId, roomId, captureViolationProof, reportViolation]);
 
   // ── 5. Tab Switch / Window Blur Detection (FR-5.3) ───────────────────────────
   useEffect(() => {
@@ -333,7 +354,7 @@ export function useProctoring({
     const handleVisibilityChange = () => {
       if (document.hidden) {
         emitTabSwitch({ candidateId, testId, roomId });
-        const proof = captureScreenSnapshot();
+        const proof = captureViolationProof('TAB_SWITCH');
         reportViolation('TAB_SWITCH', proof);
         toast.error('⚠️ Tab switch detected! Switching tabs is strictly prohibited.', { duration: 4000 });
       }
@@ -341,7 +362,7 @@ export function useProctoring({
 
     const handleWindowBlur = () => {
       emitTabSwitch({ candidateId, testId, roomId });
-      const proof = captureScreenSnapshot();
+      const proof = captureViolationProof('TAB_SWITCH');
       reportViolation('TAB_SWITCH', proof);
     };
 
@@ -352,7 +373,7 @@ export function useProctoring({
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('blur', handleWindowBlur);
     };
-  }, [enabled, candidateId, testId, roomId, captureScreenSnapshot, reportViolation]);
+  }, [enabled, candidateId, testId, roomId, captureViolationProof, reportViolation]);
 
   // ── 6. Copy-Paste / Right-Click Blocking (FR-5.4) ───────────────────────────
   useEffect(() => {

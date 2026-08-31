@@ -204,4 +204,42 @@ const reviewMalpractice = async (req, res, next) => {
   }
 };
 
-module.exports = { submitFrame, reportViolation, reviewMalpractice };
+// ── GET /tests/:testId/candidates/:candidateId/malpractice-logs ───────────────
+const getCandidateMalpracticeLogs = async (req, res, next) => {
+  try {
+    const { testId, candidateId } = req.params;
+    const logs = await MalpracticeLog.find({ testId, candidateId })
+      .populate('reviewedBy', 'name email')
+      .sort({ detectedAt: -1 });
+    res.json({ malpracticeLogs: logs });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ── GET /tests/:testId/malpractice-logs ───────────────────────────────────────
+const getTestMalpracticeLogs = async (req, res, next) => {
+  try {
+    const { testId } = req.params;
+    const { candidateId } = req.query;
+    const filter = { testId };
+    if (candidateId) filter.candidateId = candidateId;
+
+    const logs = await MalpracticeLog.find(filter)
+      .populate('candidateId', 'name email isDisqualified')
+      .populate('roomId', 'roomName roomCode')
+      .populate('reviewedBy', 'name email')
+      .sort({ detectedAt: -1 });
+    res.json({ malpracticeLogs: logs });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = {
+  submitFrame,
+  reportViolation,
+  reviewMalpractice,
+  getCandidateMalpracticeLogs,
+  getTestMalpracticeLogs,
+};

@@ -204,9 +204,25 @@ const CandidateRowItem = memo(({ candidate, roomName, onSelect, onWarn, onDisqua
 
       <div>
         {malpracticeCount > 0 ? (
-          <span className="badge badge-danger" style={{ fontSize: '0.72rem', fontWeight: 700 }}>
-            {malpracticeCount} Violations
-          </span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(candidate);
+            }}
+            className="badge badge-danger"
+            style={{
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              border: 'none',
+              padding: '3px 8px',
+              borderRadius: 4,
+            }}
+            title="Click to view violation proof screenshots"
+          >
+            ⚠️ {malpracticeCount} Violations
+          </button>
         ) : (
           <span style={{ color: '#2ECC71', fontSize: '0.75rem' }}>✓ Clean (0)</span>
         )}
@@ -274,6 +290,26 @@ export default function AdminLiveDashboard() {
 
   // Selected candidate for inspect drawer
   const [inspectCandidate, setInspectCandidate] = useState(null);
+  const [candidateLogs, setCandidateLogs] = useState([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+
+  // Fetch candidate malpractice logs whenever inspect modal opens
+  useEffect(() => {
+    if (!inspectCandidate?.candidateId) {
+      setCandidateLogs([]);
+      return;
+    }
+    setLoadingLogs(true);
+    api.getCandidateMalpracticeLogs(testId, inspectCandidate.candidateId)
+      .then((res) => {
+        setCandidateLogs(res.data.malpracticeLogs || []);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch candidate malpractice logs:', err);
+        setCandidateLogs([]);
+      })
+      .finally(() => setLoadingLogs(false));
+  }, [inspectCandidate, testId]);
 
   // Zoom proof screenshot modal
   const [zoomScreenshotUrl, setZoomScreenshotUrl] = useState(null);
@@ -282,19 +318,23 @@ export default function AdminLiveDashboard() {
   const debounceBufferRef = useRef({});
   const debounceTimerRef = useRef(null);
 
-  // Load Test & Rooms
+  // Load Test, Rooms, & Initial Active Candidates
   useEffect(() => {
     let isMounted = true;
     const fetchInitialData = async () => {
       try {
         setLoading(true);
-        const [testRes, roomsRes] = await Promise.all([
+        const [testRes, roomsRes, liveRes] = await Promise.all([
           api.getTest(testId),
           api.getRooms(testId),
+          api.getLiveCandidates(testId).catch(() => ({ data: { candidates: {} } })),
         ]);
         if (!isMounted) return;
         setTest(testRes.data.test);
         setRooms(roomsRes.data.rooms || []);
+        if (liveRes.data?.candidates) {
+          setCandidatesMap(liveRes.data.candidates);
+        }
       } catch (err) {
         toast.error(err.response?.data?.error || 'Failed to initialize live dashboard');
       } finally {
@@ -459,17 +499,33 @@ export default function AdminLiveDashboard() {
     try {
       await api.reviewMalpractice(logId, { adminAction: action });
       toast.success(`Candidate marked as ${action}`);
-      if (action === 'DISQUALIFIED' && activeAlert?.candidateId) {
+
+      // Update candidateLogs state locally in inspect modal
+      setCandidateLogs((prev) =>
+        prev.map((l) => (l._id === logId ? { ...l, adminAction: action, adminReviewed: true } : l))
+      );
+
+      const targetCandidateId = inspectCandidate?.candidateId || activeAlert?.candidateId;
+      if (action === 'DISQUALIFIED' && targetCandidateId) {
         setCandidatesMap((prev) => ({
           ...prev,
-          [activeAlert.candidateId]: {
-            ...prev[activeAlert.candidateId],
+          [targetCandidateId]: {
+            ...prev[targetCandidateId],
             status: 'DISQUALIFIED',
             colorStatus: 'RED',
           },
         }));
+        if (inspectCandidate && inspectCandidate.candidateId === targetCandidateId) {
+          setInspectCandidate((prev) => ({
+            ...prev,
+            status: 'DISQUALIFIED',
+            colorStatus: 'RED',
+          }));
+        }
       }
-      setActiveAlert(null);
+      if (activeAlert?.malpracticeLogId === logId) {
+        setActiveAlert(null);
+      }
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to review violation');
     }
@@ -498,14 +554,15 @@ export default function AdminLiveDashboard() {
 
   const roomsById = useMemo(() => {
     const map = {};
-    rooms.forEach((r) => { map[r._id] = r.roomName; });
+    rooms.forEach((r) => { map[String(r._id)] = r.roomName; });
     return map;
   }, [rooms]);
 
   // Filter candidates
   const candidateList = useMemo(() => {
     return Object.values(candidatesMap).filter((c) => {
-      const matchesRoom = selectedRoomId === 'ALL' || c.roomId === selectedRoomId;
+      const cRoomId = typeof c.roomId === 'object' ? (c.roomId?._id || c.roomId?.id) : c.roomId;
+      const matchesRoom = selectedRoomId === 'ALL' || String(cRoomId) === String(selectedRoomId);
       const matchesStatus = filterStatus === 'ALL' || c.colorStatus === filterStatus || c.status === filterStatus;
       const matchesSearch = !searchQuery.trim() || c.name?.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesRoom && matchesStatus && matchesSearch;
@@ -930,12 +987,19 @@ export default function AdminLiveDashboard() {
           </div>
         )}
 
-        {/* ── Candidate Inspect Modal / Drawer ── */}
+        {/* ── Candidate Inspect Modal with Malpractice Proof & Evidence History (FR-7.3, FR-7.4) ── */}
         {inspectCandidate && (
           <div className="modal-backdrop" onClick={() => setInspectCandidate(null)}>
-            <div className="modal-container" style={{ maxWidth: 500 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-container" style={{ maxWidth: 680, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
-                <h3 className="modal-title">Candidate Details</h3>
+                <div>
+                  <h3 className="modal-title" style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    🔍 Candidate Inspection &amp; Evidence
+                  </h3>
+                  <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+                    Live Proctoring &amp; Malpractice Review
+                  </span>
+                </div>
                 <button
                   type="button"
                   onClick={() => setInspectCandidate(null)}
@@ -945,12 +1009,13 @@ export default function AdminLiveDashboard() {
                 </button>
               </div>
 
-              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto', paddingRight: 4 }}>
+                {/* Top Info Card */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f8fafc', padding: 14, borderRadius: 8, border: '1px solid #e2e8f0' }}>
                   <div>
-                    <h4 style={{ fontSize: '1.1rem', color: '#1A2B3C' }}>{inspectCandidate.name}</h4>
-                    <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-                      Room: {roomsById[inspectCandidate.roomId] || 'Assigned Room'}
+                    <h4 style={{ fontSize: '1.15rem', color: '#1A2B3C', fontWeight: 800, margin: 0 }}>{inspectCandidate.name}</h4>
+                    <span style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                      {inspectCandidate.email || 'Candidate'} · Room: <strong>{roomsById[inspectCandidate.roomId] || inspectCandidate.roomName || 'Assigned Room'}</strong>
                     </span>
                   </div>
                   <span
@@ -958,48 +1023,218 @@ export default function AdminLiveDashboard() {
                     style={{
                       background: `${STATUS_COLORS[inspectCandidate.colorStatus] || '#9ca3af'}20`,
                       color: STATUS_COLORS[inspectCandidate.colorStatus] || '#374151',
-                      border: `1px solid ${STATUS_COLORS[inspectCandidate.colorStatus] || '#9ca3af'}`,
+                      border: `1.5px solid ${STATUS_COLORS[inspectCandidate.colorStatus] || '#9ca3af'}`,
+                      fontWeight: 700,
+                      fontSize: '0.8rem',
+                      padding: '4px 10px',
                     }}
                   >
-                    {inspectCandidate.colorStatus || 'ACTIVE'}
+                    {inspectCandidate.status || inspectCandidate.colorStatus || 'ACTIVE'}
                   </span>
                 </div>
 
-                <div style={{ background: '#f9fafb', padding: 14, borderRadius: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: '0.85rem' }}>
+                {/* Key Metrics Grid */}
+                <div style={{ background: '#ffffff', padding: 12, borderRadius: 8, border: '1px solid #e5e7eb', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, fontSize: '0.85rem' }}>
                   <div>
-                    <span style={{ color: '#6b7280' }}>Questions Solved:</span>
-                    <strong style={{ display: 'block', color: '#1A2B3C', fontSize: '1.05rem', marginTop: 2 }}>
+                    <span style={{ color: '#6b7280', fontSize: '0.78rem' }}>Questions Solved:</span>
+                    <strong style={{ display: 'block', color: '#1A2B3C', fontSize: '1.1rem', marginTop: 2 }}>
                       {inspectCandidate.questionsCompleted ?? 0}
                     </strong>
                   </div>
                   <div>
-                    <span style={{ color: '#6b7280' }}>Malpractice Incidents:</span>
-                    <strong style={{ display: 'block', color: inspectCandidate.malpracticeCount > 0 ? '#E74C3C' : '#2ECC71', fontSize: '1.05rem', marginTop: 2 }}>
-                      {inspectCandidate.malpracticeCount ?? 0}
+                    <span style={{ color: '#6b7280', fontSize: '0.78rem' }}>Total Violations:</span>
+                    <strong style={{ display: 'block', color: (inspectCandidate.malpracticeCount || candidateLogs.length) > 0 ? '#E74C3C' : '#2ECC71', fontSize: '1.1rem', marginTop: 2 }}>
+                      {Math.max(inspectCandidate.malpracticeCount || 0, candidateLogs.length)}
                     </strong>
                   </div>
                   <div>
-                    <span style={{ color: '#6b7280' }}>Time Remaining:</span>
-                    <span style={{ display: 'block', fontFamily: 'monospace', fontWeight: 600, color: '#374151', marginTop: 2 }}>
+                    <span style={{ color: '#6b7280', fontSize: '0.78rem' }}>Time Remaining:</span>
+                    <span style={{ display: 'block', fontFamily: 'monospace', fontWeight: 700, color: '#374151', fontSize: '0.95rem', marginTop: 2 }}>
                       {inspectCandidate.timeRemaining !== undefined
                         ? `${Math.floor(inspectCandidate.timeRemaining / 60000)}m ${Math.floor((inspectCandidate.timeRemaining % 60000) / 1000)}s`
                         : '—'}
                     </span>
                   </div>
-                  <div>
-                    <span style={{ color: '#6b7280' }}>Status:</span>
-                    <span style={{ display: 'block', fontWeight: 600, color: '#1A2B3C', marginTop: 2 }}>
-                      {inspectCandidate.status || 'IN_PROGRESS'}
+                </div>
+
+                {/* Malpractice Logs & Evidence Section */}
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1A2B3C', display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
+                      <span>📸</span> Malpractice Violation History &amp; Proof Screenshots
+                    </h4>
+                    <span className="badge badge-secondary" style={{ fontSize: '0.72rem' }}>
+                      {candidateLogs.length} {candidateLogs.length === 1 ? 'Incident' : 'Incidents'}
                     </span>
                   </div>
+
+                  {loadingLogs ? (
+                    <div style={{ padding: 24, textAlign: 'center', color: '#6b7280' }}>
+                      <div className="spinner spinner-dark" style={{ width: 24, height: 24, margin: '0 auto 8px auto' }} />
+                      Loading violation proof history...
+                    </div>
+                  ) : candidateLogs.length === 0 ? (
+                    <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#065f46', padding: '16px', borderRadius: 8, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: '1.4rem' }}>✓</span>
+                      <div>
+                        <strong>Clean Record:</strong> No malpractice violations or suspicious events have been logged for this candidate.
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 380, overflowY: 'auto', paddingRight: 4 }}>
+                      {candidateLogs.map((log, index) => {
+                        const isDisqualified = log.adminAction === 'DISQUALIFIED';
+                        const isWarned = log.adminAction === 'WARNED';
+                        const isUnreviewed = !log.adminReviewed || log.adminAction === 'NONE';
+
+                        return (
+                          <div
+                            key={log._id || index}
+                            style={{
+                              background: '#f8fafc',
+                              border: `1.5px solid ${isDisqualified ? '#fca5a5' : isWarned ? '#fcd34d' : '#cbd5e1'}`,
+                              borderRadius: 8,
+                              padding: 14,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 10,
+                            }}
+                          >
+                            {/* Log Header Row */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span
+                                  className={`badge ${
+                                    log.violationType === 'PHONE_DETECTED' || log.violationType === 'MULTIPLE_FACES'
+                                      ? 'badge-danger'
+                                      : 'badge-warning'
+                                  }`}
+                                  style={{ fontWeight: 700, fontSize: '0.75rem', padding: '3px 8px' }}
+                                >
+                                  {log.violationType === 'PHONE_DETECTED' && '📱 Phone Detected'}
+                                  {log.violationType === 'MULTIPLE_FACES' && '👥 Multiple Faces'}
+                                  {log.violationType === 'NO_FACE_15MIN' && '👤 No Face (15+ min)'}
+                                  {log.violationType === 'TAB_SWITCH' && '🔄 Tab Switch'}
+                                  {log.violationType === 'FULLSCREEN_EXIT' && '⛶ Fullscreen Exit'}
+                                  {!['PHONE_DETECTED', 'MULTIPLE_FACES', 'NO_FACE_15MIN', 'TAB_SWITCH', 'FULLSCREEN_EXIT'].includes(log.violationType) && (log.violationType || 'Violation')}
+                                </span>
+                                <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                                  🕒 {new Date(log.detectedAt).toLocaleTimeString()} · {new Date(log.detectedAt).toLocaleDateString()}
+                                </span>
+                              </div>
+
+                              <div>
+                                {isDisqualified && (
+                                  <span className="badge badge-danger" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                                    🚫 Disqualified
+                                  </span>
+                                )}
+                                {isWarned && (
+                                  <span className="badge badge-warning" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                                    ⚠️ Warning Issued
+                                  </span>
+                                )}
+                                {isUnreviewed && (
+                                  <span className="badge badge-secondary" style={{ fontSize: '0.72rem', padding: '2px 8px', background: '#e2e8f0', color: '#475569' }}>
+                                    ⏳ Unreviewed
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Proof Screenshot Frame */}
+                            {log.proofScreenshotUrl ? (
+                              <div>
+                                <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'block', marginBottom: 4 }}>
+                                  Captured Proof Evidence:
+                                </span>
+                                <div
+                                  style={{
+                                    position: 'relative',
+                                    border: '1px solid #cbd5e1',
+                                    borderRadius: 6,
+                                    overflow: 'hidden',
+                                    cursor: 'zoom-in',
+                                    background: '#000',
+                                    maxHeight: 180,
+                                    display: 'flex',
+                                    justifyContent: 'center',
+                                    alignItems: 'center',
+                                  }}
+                                  onClick={() => setZoomScreenshotUrl(log.proofScreenshotUrl)}
+                                  title="Click to zoom in full-resolution screenshot"
+                                >
+                                  <img
+                                    src={log.proofScreenshotUrl}
+                                    alt="Violation Proof"
+                                    style={{ maxWidth: '100%', maxHeight: 180, objectFit: 'contain' }}
+                                  />
+                                  <div style={{
+                                    position: 'absolute', bottom: 6, right: 8,
+                                    background: 'rgba(0,0,0,0.7)', color: 'white',
+                                    fontSize: '0.68rem', padding: '2px 8px', borderRadius: 4,
+                                    fontWeight: 600,
+                                  }}>
+                                    🔍 Click to Enlarge
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{ background: '#f1f5f9', padding: '8px 12px', borderRadius: 6, color: '#64748b', fontSize: '0.78rem' }}>
+                                📷 No image frame captured for this event.
+                              </div>
+                            )}
+
+                            {/* Review Action Buttons */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4, borderTop: '1px solid #e2e8f0' }}>
+                              <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                {log.reviewedBy ? `Reviewed by ${log.reviewedBy.name || 'Admin'}` : 'Admin Review Action:'}
+                              </span>
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReviewMalpractice(log._id, 'WARNED')}
+                                  className="btn btn-secondary"
+                                  style={{
+                                    padding: '3px 10px', fontSize: '0.72rem',
+                                    color: '#d97706', borderColor: '#d97706',
+                                    background: isWarned ? '#fef3c7' : 'transparent',
+                                  }}
+                                  disabled={isDisqualified}
+                                >
+                                  ⚠️ {isWarned ? 'Warned' : 'Issue Warning'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReviewMalpractice(log._id, 'DISQUALIFIED')}
+                                  className="btn btn-danger"
+                                  style={{
+                                    padding: '3px 10px', fontSize: '0.72rem',
+                                    background: isDisqualified ? '#dc2626' : undefined,
+                                  }}
+                                  disabled={isDisqualified}
+                                >
+                                  🚫 {isDisqualified ? 'Disqualified' : 'Disqualify'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="modal-footer">
+              <div className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                  Proctoring Decision Logs (FR-7.3, FR-7.4)
+                </div>
                 <button
                   type="button"
                   onClick={() => setInspectCandidate(null)}
                   className="btn btn-secondary"
+                  style={{ padding: '6px 16px' }}
                 >
                   Close
                 </button>

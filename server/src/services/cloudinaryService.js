@@ -20,36 +20,40 @@ cloudinary.config({
  */
 const uploadScreenshot = (imageBuffer, testId, candidateId) => {
   return new Promise((resolve, reject) => {
-    // Validate Cloudinary config
-    if (!process.env.CLOUDINARY_CLOUD_NAME) {
-      console.warn('[Cloudinary] Not configured — screenshot URL will be null');
-      return resolve(null);
-    }
+    // If Cloudinary credentials are provided, upload to Cloudinary CDN
+    if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+      const timestamp = Date.now();
+      const folder = `malpractice/${testId}/${candidateId}`;
+      const public_id = `${folder}/${timestamp}`;
 
-    const timestamp = Date.now();
-    const folder = `malpractice/${testId}/${candidateId}`;
-    const public_id = `${folder}/${timestamp}`;
-
-    const uploadStream = cloudinary.uploader.upload_stream(
-      {
-        resource_type: 'image',
-        public_id,
-        folder: undefined, // public_id already includes folder path
-        overwrite: false,
-        quality: 'auto',
-        format: 'jpg',
-      },
-      (error, result) => {
-        if (error) {
-          console.error('[Cloudinary] Upload error:', error);
-          reject(error);
-        } else {
-          resolve(result.secure_url);
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          resource_type: 'image',
+          public_id,
+          folder: undefined,
+          overwrite: false,
+          quality: 'auto',
+          format: 'jpg',
+        },
+        (error, result) => {
+          if (error) {
+            console.error('[Cloudinary] Upload error, falling back to data URL:', error.message);
+            // Fallback to data URL so evidence is never lost
+            const dataUrl = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
+            resolve(dataUrl);
+          } else {
+            resolve(result.secure_url);
+          }
         }
-      }
-    );
+      );
 
-    uploadStream.end(imageBuffer);
+      uploadStream.end(imageBuffer);
+    } else {
+      // In local dev/testing without Cloudinary credentials, store image as data URL (Base64 JPEG)
+      // so proof screenshots are ALWAYS preserved and rendered in the admin dashboard!
+      const dataUrl = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
+      resolve(dataUrl);
+    }
   });
 };
 
