@@ -127,13 +127,19 @@ const getRoomCandidates = async (req, res, next) => {
       .populate('candidateId', 'name email phone isDisqualified')
       .sort({ createdAt: -1 });
 
-    // 2. Fetch malpractice incident counts for this room
+    // 2. Fetch malpractice incident logs for this room
     const MalpracticeLog = require('../models/MalpracticeLog');
-    const malpracticeLogs = await MalpracticeLog.find({ roomId });
+    const malpracticeLogs = await MalpracticeLog.find({ roomId }).populate('candidateId', 'name email phone isDisqualified');
     const malpracticeCounts = {};
+    const malpracticeCandidates = [];
     malpracticeLogs.forEach((log) => {
-      const cid = log.candidateId?.toString();
-      if (cid) malpracticeCounts[cid] = (malpracticeCounts[cid] || 0) + 1;
+      const cid = log.candidateId?._id?.toString() || log.candidateId?.toString();
+      if (cid) {
+        malpracticeCounts[cid] = (malpracticeCounts[cid] || 0) + 1;
+        if (log.candidateId && typeof log.candidateId === 'object' && log.candidateId.name) {
+          malpracticeCandidates.push({ candidate: log.candidateId, detectedAt: log.detectedAt, action: log.adminAction });
+        }
+      }
     });
 
     // 3. Deduplicate by candidateId, preserving real-time status & progress
@@ -193,6 +199,29 @@ const getRoomCandidates = async (req, res, next) => {
             malpracticeCount: malpracticeCounts[cid] || 0,
           };
         }
+      }
+    }
+
+    // Third, process any candidates recorded in malpractice events for this room
+    for (const item of malpracticeCandidates) {
+      const candidate = item.candidate;
+      const cid = candidate._id.toString();
+      if (!candidateMap[cid]) {
+        const isDisqualified = candidate.isDisqualified || item.action === 'DISQUALIFIED';
+        candidateMap[cid] = {
+          _id: cid,
+          candidateId: cid,
+          name: candidate.name || 'Candidate',
+          email: candidate.email || '—',
+          phone: candidate.phone || '—',
+          isDisqualified,
+          status: isDisqualified ? 'DISQUALIFIED' : 'IN_PROGRESS',
+          questionsCompleted: 0,
+          submittedAt: null,
+          startedAt: item.detectedAt || room.createdAt,
+          candidateEndTime: null,
+          malpracticeCount: malpracticeCounts[cid] || 0,
+        };
       }
     }
 

@@ -590,6 +590,57 @@ export default function AdminLiveDashboard() {
     };
   }, [candidatesMap]);
 
+  // Aggregate / Tentative Timer Calculation (for all active candidates)
+  const [ticker, setTicker] = useState(0);
+
+  // 1-second ticker for smooth timer countdown
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTicker((t) => t + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const tentativeTimer = useMemo(() => {
+    if (!test) return { formatted: '—', avgMinutes: 0, maxMinutes: 0, activeCount: 0 };
+    if (test.status === 'ENDED') {
+      return { formatted: '00:00 (Concluded)', avgMinutes: 0, maxMinutes: 0, activeCount: 0 };
+    }
+
+    const activeTimes = Object.values(candidatesMap)
+      .map((c) => c.timeRemaining)
+      .filter((t) => typeof t === 'number' && t > 0);
+
+    if (activeTimes.length === 0) {
+      const defaultDurationMs = (test.durationMinutes || 60) * 60 * 1000;
+      const m = Math.floor(defaultDurationMs / 60000);
+      return {
+        formatted: `${m}m 00s`,
+        avgMinutes: m,
+        maxMinutes: m,
+        activeCount: 0,
+      };
+    }
+
+    const avgMs = Math.round(activeTimes.reduce((a, b) => a + b, 0) / activeTimes.length);
+    const maxMs = Math.max(...activeTimes);
+
+    const formatMs = (ms) => {
+      const totalSec = Math.max(0, Math.floor(ms / 1000));
+      const mins = Math.floor(totalSec / 60);
+      const secs = totalSec % 60;
+      return `${mins}m ${secs < 10 ? '0' : ''}${secs}s`;
+    };
+
+    return {
+      formatted: formatMs(avgMs),
+      maxFormatted: formatMs(maxMs),
+      avgMinutes: Math.floor(avgMs / 60000),
+      maxMinutes: Math.floor(maxMs / 60000),
+      activeCount: activeTimes.length,
+    };
+  }, [candidatesMap, test, ticker]);
+
   // Section 13 NFR Virtualized Row Renderer for >50 items
   const VirtualizedRow = useCallback(({ index, style }) => {
     const candidate = candidateList[index];
@@ -655,6 +706,31 @@ export default function AdminLiveDashboard() {
                 <span className="badge badge-primary" style={{ fontSize: '0.75rem' }}>
                   {test?.testType}
                 </span>
+
+                {/* Aggregate / Tentative Timer Badge */}
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '4px 12px',
+                    background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)',
+                    borderRadius: 8,
+                    border: '1px solid #334155',
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.12)',
+                  }}
+                  title={`Tentative average time remaining across ${tentativeTimer.activeCount} active candidate(s)`}
+                >
+                  <span style={{ fontSize: '1rem' }}>⏱️</span>
+                  <div>
+                    <div style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#94A3B8', fontWeight: 700 }}>
+                      Avg Session Timer
+                    </div>
+                    <div style={{ fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 800, color: '#38BDF8', letterSpacing: '0.03em', lineHeight: 1.1 }}>
+                      {tentativeTimer.formatted}
+                    </div>
+                  </div>
+                </div>
               </div>
               <p style={{ color: '#6b7280', fontSize: '0.85rem', marginTop: 4 }}>
                 Real-time multi-room monitoring · Passing Threshold: <strong>≥ {test?.passingCriteria} Qs</strong>
@@ -701,10 +777,16 @@ export default function AdminLiveDashboard() {
         </div>
 
         {/* ── Real-Time Metrics Bar ── */}
-        <div className="stats-grid" style={{ marginBottom: 24, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+        <div className="stats-grid" style={{ marginBottom: 24, gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
           <div className="stat-card">
             <div className="stat-value">{stats.total}</div>
             <div className="stat-label">Active Candidates</div>
+          </div>
+          <div className="stat-card" style={{ borderLeft: '4px solid #0EA5E9' }}>
+            <div className="stat-value" style={{ color: '#0284c7', fontFamily: 'monospace', fontSize: '1.4rem' }}>
+              {tentativeTimer.formatted}
+            </div>
+            <div className="stat-label">Avg Session Timer</div>
           </div>
           <div className="stat-card" style={{ borderLeft: `4px solid ${STATUS_COLORS.GREEN}` }}>
             <div className="stat-value" style={{ color: STATUS_COLORS.GREEN }}>{stats.green}</div>
