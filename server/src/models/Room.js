@@ -9,6 +9,12 @@ const roomSchema = new mongoose.Schema({
   passwordValidUntil: { type: Date, required: true }, // createdAt + startTestWindowMinutes
   capacity: { type: Number },
   status: { type: String, enum: ['ACTIVE', 'CLOSED'], default: 'ACTIVE' },
+  joinedCandidates: [
+    {
+      candidateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Candidate' },
+      joinedAt: { type: Date, default: Date.now },
+    },
+  ],
   createdAt: { type: Date, default: Date.now },
 });
 

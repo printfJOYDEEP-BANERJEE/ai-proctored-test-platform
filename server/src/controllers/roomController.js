@@ -118,29 +118,32 @@ const deleteRoom = async (req, res, next) => {
 // ── GET /rooms/:roomId/candidates ─────────────────────────────────────────────
 const getRoomCandidates = async (req, res, next) => {
   try {
-    const room = await Room.findById(req.params.roomId);
+    const { roomId } = req.params;
+    const room = await Room.findById(roomId).populate('joinedCandidates.candidateId', 'name email phone isDisqualified');
     if (!room) return res.status(404).json({ error: 'Room not found' });
 
-    // Fetch all submissions for this room, sorted newest first
-    const submissions = await Submission.find({ roomId: req.params.roomId })
+    // 1. Fetch all submissions for this room, sorted newest first
+    const submissions = await Submission.find({ roomId })
       .populate('candidateId', 'name email phone isDisqualified')
       .sort({ createdAt: -1 });
 
-    // Fetch malpractice incident counts for this room
+    // 2. Fetch malpractice incident counts for this room
     const MalpracticeLog = require('../models/MalpracticeLog');
-    const malpracticeLogs = await MalpracticeLog.find({ roomId: req.params.roomId });
+    const malpracticeLogs = await MalpracticeLog.find({ roomId });
     const malpracticeCounts = {};
     malpracticeLogs.forEach((log) => {
       const cid = log.candidateId?.toString();
       if (cid) malpracticeCounts[cid] = (malpracticeCounts[cid] || 0) + 1;
     });
 
-    // Deduplicate by candidateId, preserving real-time status & progress
+    // 3. Deduplicate by candidateId, preserving real-time status & progress
     const candidateMap = {};
+
+    // First, process active submissions
     for (const sub of submissions) {
       const candidate = sub.candidateId;
       if (!candidate) continue;
-      const cid = candidate._id.toString();
+      const cid = candidate._id ? candidate._id.toString() : sub.candidateId.toString();
 
       if (!candidateMap[cid]) {
         const isDisqualified = candidate.isDisqualified || sub.status === 'AUTO_SUBMITTED_DISQUALIFIED';
@@ -152,17 +155,44 @@ const getRoomCandidates = async (req, res, next) => {
         candidateMap[cid] = {
           _id: cid,
           candidateId: cid,
-          name: candidate.name,
-          email: candidate.email,
-          phone: candidate.phone,
+          name: candidate.name || 'Candidate',
+          email: candidate.email || '—',
+          phone: candidate.phone || '—',
           isDisqualified,
           status, // 'IN_PROGRESS' | 'SUBMITTED' | 'AUTO_SUBMITTED_TIME_UP' | 'DISQUALIFIED'
-          questionsCompleted: sub.questionsCompleted || 0,
+          questionsCompleted: sub.questionsCompleted || (sub.status === 'SUBMITTED' ? 1 : 0),
           submittedAt: sub.submittedAt || null,
           startedAt: sub.candidateStartTime || sub.createdAt,
           candidateEndTime: sub.candidateEndTime,
           malpracticeCount: malpracticeCounts[cid] || 0,
         };
+      }
+    }
+
+    // Second, process any candidates recorded in room.joinedCandidates who may not have submitted code yet
+    if (room.joinedCandidates && room.joinedCandidates.length > 0) {
+      for (const entry of room.joinedCandidates) {
+        const candidate = entry.candidateId;
+        if (!candidate) continue;
+        const cid = candidate._id ? candidate._id.toString() : entry.candidateId.toString();
+
+        if (!candidateMap[cid]) {
+          const isDisqualified = candidate.isDisqualified || false;
+          candidateMap[cid] = {
+            _id: cid,
+            candidateId: cid,
+            name: candidate.name || 'Candidate',
+            email: candidate.email || '—',
+            phone: candidate.phone || '—',
+            isDisqualified,
+            status: isDisqualified ? 'DISQUALIFIED' : 'IN_PROGRESS',
+            questionsCompleted: 0,
+            submittedAt: null,
+            startedAt: entry.joinedAt || room.createdAt,
+            candidateEndTime: null,
+            malpracticeCount: malpracticeCounts[cid] || 0,
+          };
+        }
       }
     }
 

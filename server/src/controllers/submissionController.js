@@ -42,6 +42,29 @@ const joinRoom = async (req, res, next) => {
       return res.status(403).json({ error: 'Test is not currently live' });
     }
 
+    // Associate candidate with the room in DB
+    const candidateId = req.user.id;
+    await Room.findByIdAndUpdate(
+      room._id,
+      {
+        $addToSet: { joinedCandidates: { candidateId, joinedAt: new Date() } },
+      }
+    );
+
+    // Broadcast real-time candidate join to admin monitoring channels
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`test:${room.testId}:admin`).emit('room:updated', {
+        roomId: room._id,
+        candidateId,
+        action: 'CANDIDATE_JOINED',
+      });
+      io.to(`test:${room.testId}:admin`).emit('dashboard:update', {
+        testId: room.testId,
+        candidateId,
+      });
+    }
+
     res.json({
       test: {
         _id: test._id,
@@ -86,7 +109,7 @@ const startAttempt = async (req, res, next) => {
 
     // Get questions from question set (visible test cases only — FR-4.2)
     const questionSet = test.questionSetId;
-    const allQuestions = questionSet.questionIds || [];
+    const allQuestions = questionSet?.questionIds || [];
     // Limit to totalQuestions
     const questions = allQuestions.slice(0, test.totalQuestions).map((q) => ({
       _id: q._id,
@@ -101,31 +124,67 @@ const startAttempt = async (req, res, next) => {
       testType: q.testType,
     }));
 
-    // Find the room for this candidate (from a prior join)
-    // ASSUMPTION: We require the roomId to be passed in req.body or use the last joined room
-    const { roomId } = req.body;
+    // Find the room for this candidate (from req.body or fallback to room where candidate joined)
+    let targetRoomId = req.body.roomId;
+    if (!targetRoomId) {
+      const candidateRoom = await Room.findOne({
+        testId,
+        'joinedCandidates.candidateId': candidateId,
+      });
+      if (candidateRoom) targetRoomId = candidateRoom._id;
+    }
 
-    // Create IN_PROGRESS submissions for each question
-    const submissionPromises = questions.map((q) =>
-      Submission.findOneAndUpdate(
-        { candidateId, testId, questionId: q._id },
+    if (targetRoomId) {
+      await Room.findByIdAndUpdate(
+        targetRoomId,
         {
-          $setOnInsert: {
+          $addToSet: { joinedCandidates: { candidateId, joinedAt: now } },
+        }
+      );
+    }
+
+    // Create / update IN_PROGRESS submissions for each question
+    let createdSubmissions = [];
+    if (questions.length > 0) {
+      const submissionPromises = questions.map((q) =>
+        Submission.findOneAndUpdate(
+          { candidateId, testId, questionId: q._id },
+          {
+            $set: {
+              candidateId,
+              testId,
+              roomId: targetRoomId,
+              questionId: q._id,
+              candidateStartTime,
+              candidateEndTime,
+              status: 'IN_PROGRESS',
+              visibleTestCasesTotal: q.visibleTestCases?.length || 0,
+            },
+          },
+          { upsert: true, new: true }
+        )
+      );
+      createdSubmissions = await Promise.all(submissionPromises);
+    } else {
+      // Fallback for tests without questions defined yet
+      const placeholderQId = test.questionSetId?._id || test._id;
+      const sub = await Submission.findOneAndUpdate(
+        { candidateId, testId, questionId: placeholderQId },
+        {
+          $set: {
             candidateId,
             testId,
-            roomId,
-            questionId: q._id,
+            roomId: targetRoomId,
+            questionId: placeholderQId,
             candidateStartTime,
             candidateEndTime,
             status: 'IN_PROGRESS',
-            visibleTestCasesTotal: q.visibleTestCases?.length || 0,
-            hiddenTestCasesTotal: 0, // will be set during evaluation
           },
         },
         { upsert: true, new: true }
-      )
-    );
-    const submissions = await Promise.all(submissionPromises);
+      );
+      createdSubmissions = [sub];
+    }
 
     // Server-side auto-submit timer (FR-5.6: server-side timer, not solely client-triggered)
     const msUntilEnd = candidateEndTime.getTime() - now.getTime();
@@ -147,7 +206,7 @@ const startAttempt = async (req, res, next) => {
     }, msUntilEnd);
 
     res.json({
-      submissionSessionId: submissions[0]?._id, // session reference
+      submissionSessionId: createdSubmissions[0]?._id, // session reference
       candidateStartTime,
       candidateEndTime,
       questions,
