@@ -299,9 +299,11 @@ export default function CandidateAITestScreen() {
         promptLog: chatMessages,
       });
       setSubmittedQuestions(prev => new Set([...prev, activeQuestion._id]));
-      toast.success(`Q${activeQuestionIdx + 1} submitted successfully!`);
+      toast.success(`Q${activeQuestionIdx + 1} project submitted successfully!`);
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Submit failed');
+      console.error('Submit question error:', err);
+      const errMsg = err.response?.data?.error || err.message || 'Submit failed';
+      toast.error(`Submit error: ${errMsg}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -318,7 +320,9 @@ export default function CandidateAITestScreen() {
       await api.submitAll(session.test._id);
       navigate('/candidate/complete');
     } catch (err) {
-      toast.error('Submit all failed');
+      console.error('Submit all error:', err);
+      const errMsg = err.response?.data?.error || err.message || 'Submit all failed';
+      toast.error(`Submit all failed: ${errMsg}`);
       isSubmittingAll.current = false;
     }
   };

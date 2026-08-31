@@ -33,7 +33,7 @@ export default function CandidateRegister() {
       });
       // FR-1.2: account expires in 3 days
       const candidate = { ...data.candidate, type: 'candidate' };
-      login(candidate, data.token, null);
+      login(candidate, data.token, data.refreshToken);
       toast.success(`Welcome, ${data.candidate.name}! Your account is active for 3 days.`);
       navigate('/candidate/join');
     } catch (err) {

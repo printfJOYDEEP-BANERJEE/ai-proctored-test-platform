@@ -126,6 +126,7 @@ const candidateRegister = async (req, res, next) => {
 
     const payload = { id: candidate._id.toString(), type: 'candidate' };
     const token = generateAccessToken(payload);
+    const refreshToken = generateRefreshToken(payload);
 
     res.status(201).json({
       candidate: {
@@ -136,6 +137,7 @@ const candidateRegister = async (req, res, next) => {
         expiresAt: candidate.expiresAt,
       },
       token,
+      refreshToken,
     });
   } catch (err) {
     next(err);
@@ -144,7 +146,7 @@ const candidateRegister = async (req, res, next) => {
 
 // ── POST /auth/candidate/login ────────────────────────────────────────────────
 // Body: { email, password }
-// Response: { candidate, token }
+// Response: { candidate, token, refreshToken }
 // AC: 401 if account expired/deleted (FR-1.2)
 const candidateLogin = async (req, res, next) => {
   try {
@@ -175,6 +177,7 @@ const candidateLogin = async (req, res, next) => {
 
     const payload = { id: candidate._id.toString(), type: 'candidate' };
     const token = generateAccessToken(payload);
+    const refreshToken = generateRefreshToken(payload);
 
     res.json({
       candidate: {
@@ -185,6 +188,7 @@ const candidateLogin = async (req, res, next) => {
         expiresAt: candidate.expiresAt,
       },
       token,
+      refreshToken,
     });
   } catch (err) {
     next(err);

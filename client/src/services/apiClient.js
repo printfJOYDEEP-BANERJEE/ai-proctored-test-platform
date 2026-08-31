@@ -10,7 +10,12 @@ axios.defaults.baseURL = API_BASE;
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) {
-    config.headers['Authorization'] = `Bearer ${token}`;
+    if (config.headers && typeof config.headers.set === 'function') {
+      config.headers.set('Authorization', `Bearer ${token}`);
+    } else {
+      config.headers = config.headers || {};
+      config.headers['Authorization'] = `Bearer ${token}`;
+    }
   }
   return config;
 });
@@ -20,14 +25,19 @@ axios.interceptors.response.use(
   (response) => response,
   async (error) => {
     const original = error.config;
-    if (error.response?.status === 401 && !original._retry) {
+    if (error.response?.status === 401 && !original._retry && !original.url?.includes('/auth/')) {
       original._retry = true;
       const refreshToken = localStorage.getItem('refreshToken');
       if (refreshToken) {
         try {
           const { data } = await axios.post('/auth/refresh', { refreshToken });
           localStorage.setItem('token', data.token);
-          original.headers['Authorization'] = `Bearer ${data.token}`;
+          if (original.headers && typeof original.headers.set === 'function') {
+            original.headers.set('Authorization', `Bearer ${data.token}`);
+          } else {
+            original.headers = original.headers || {};
+            original.headers['Authorization'] = `Bearer ${data.token}`;
+          }
           return axios(original);
         } catch {
           localStorage.clear();
